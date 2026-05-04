@@ -1,8 +1,11 @@
 package test.hook.debug.xp;
 
+import static test.hook.debug.receiver.ZenReceiver.ACTION_SET_ZEN;
+
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.AndroidAppHelper;
 import android.app.Dialog;
 import android.content.Context;
 import android.content.Intent;
@@ -32,6 +35,7 @@ import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.IXposedHookZygoteInit;
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XC_MethodReplacement;
+import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_InitPackageResources;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
@@ -371,6 +375,161 @@ public class MainHook implements IXposedHookLoadPackage, IXposedHookInitPackageR
             });
         } catch (NoSuchMethodError e) {
 
+        }
+
+
+        if (Build.VERSION.SDK_INT >= 35) {
+
+            // com.xiaomi.fitness.main.MainActivity
+            XposedHelpers.findAndHookMethod("com.xiaomi.fitness.main.MainActivity", classLoader, "onCreate", android.os.Bundle.class, new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    super.afterHookedMethod(param);
+//                android.app.Activity activity = (android.app.Activity) param.thisObject;
+//
+//                Intent intent = new Intent(ACTION_CHECK_PERMISSION);
+//                // 核心：必须显式指定目标AppB的包名和接收器全类名，绕过可见性限制
+//                intent.setClassName("test.hook.debug", "test.hook.debug.ZenReceiver");
+//
+//                try {
+//                    activity.sendBroadcast(intent);
+//                    android.widget.Toast.makeText(activity, "唤醒广播已发送", android.widget.Toast.LENGTH_SHORT).show();
+//                } catch (Exception e) {
+//                    android.util.Log.e("HookDebug", "发送广播失败", e);
+//                }
+
+                    android.app.Activity activity = (android.app.Activity) param.thisObject;
+
+                    Intent intent = new Intent();
+                    //必须显式指定目标AppB的包名和Activity全类名
+                    intent.setClassName("test.hook.debug", "test.hook.debug.activity.PermissionActivity");
+                    //跨应用启动通常需要添加此标志位
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+
+                    try {
+                        activity.startActivity(intent);
+                        android.util.Log.d("HookDebug", "成功发起跳转请求");
+                    } catch (Exception e) {
+                        android.util.Log.e("HookDebug", "唤起PermissionActivity失败", e);
+                    }
+                }
+            });
+
+            // hook notificationManager.setInterruptionFilter
+//        XposedHelpers.findAndHookMethod("android.app.NotificationManager", null, "setInterruptionFilter", int.class, new XC_MethodHook() {
+//            @Override
+//            protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+//                super.beforeHookedMethod(param);
+//                if (Build.VERSION.SDK_INT < 35) return;
+//                param.setResult(null);
+//                android.content.Context context = null;
+//                try {
+//                    context = (android.content.Context) XposedHelpers.getObjectField(param.thisObject, "mContext");
+//                } catch (Throwable t) {
+//                    android.util.Log.e("HookDebug", "通过反射获取mContext失败", t);
+//                }
+//
+//                // 如果反射获取失败，降级使用全局的Application Context
+//                if (context == null) {
+//                    context = AndroidAppHelper.currentApplication();
+//                }
+//
+//                // 如果依然为空则无法发送广播，直接返回
+//                if (context == null) {
+//                    android.util.Log.e("HookDebug", "彻底无法获取Context，阻断执行");
+//                    return;
+//                }
+//                Intent intent = new Intent(ACTION_SET_ZEN);
+//                intent.putExtra("filter", (int) param.args[0]);
+//                // 核心：必须显式指定目标AppB的包名和接收器全类名，绕过可见性限制
+//                intent.setClassName("test.hook.debug", "test.hook.debug.receiver.ZenReceiver");
+//
+//                try {
+//                    context.sendBroadcast(intent);
+//                    android.widget.Toast.makeText(context, "唤醒广播已发送", android.widget.Toast.LENGTH_SHORT).show();
+//                } catch (Exception e) {
+//                    android.util.Log.e("HookDebug", "发送广播失败", e);
+//                }
+//            }
+//        });
+
+            XposedHelpers.findAndHookMethod("com.xiaomi.fitness.devicesettings.utils.ZenUtils", classLoader, "postSetZenMode", boolean.class, new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    super.beforeHookedMethod(param);
+
+                    param.setResult(null);
+                    android.content.Context context = AndroidAppHelper.currentApplication();
+
+//                    Lcom/xiaomi/fitness/devicesettings/utils/ZenUtils;->unRegisterZenListener()V
+//                    Lcom/xiaomi/fitness/devicesettings/utils/ZenUtils;->registerZenListener()V
+
+                    // 首先unreg，避免状态反复切换
+//                    Method unRegisterZenListener = param.thisObject.getClass().getMethod("unRegisterZenListener");
+//                    unRegisterZenListener.invoke(param.thisObject);
+                    XposedHelpers.callMethod(param.thisObject, "unRegisterZenListener");
+
+                    Intent intent = new Intent(ACTION_SET_ZEN);
+                    boolean isZen = (boolean) param.args[0];
+                    intent.putExtra("filter", isZen ? 2 : 1);
+                    // 核心：必须显式指定目标AppB的包名和接收器全类名，绕过可见性限制
+                    intent.setClassName("test.hook.debug", "test.hook.debug.receiver.ZenReceiver");
+// 1. 强制系统将此广播放入前台高优先级队列，拒绝延迟处理
+                    intent.addFlags(Intent.FLAG_RECEIVER_FOREGROUND);
+// 2. 尝试唤醒即使已经被强制停止的AppB（部分高版本系统可能无效，但建议加上）
+                    intent.addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES);
+
+                    final Object targetObject = param.thisObject;
+
+                    try {
+//                        context.sendBroadcast(intent);
+//目的是执行完了才继续
+                        context.sendOrderedBroadcast(
+                                intent,
+                                null, //不要求权限
+                                new android.content.BroadcastReceiver() {
+                                    @Override
+                                    public void onReceive(android.content.Context ctx, Intent resultIntent) {
+                                        //当ZenReceiver执行完毕后，系统会自动回调到这里
+                                        int resultCode = getResultCode();
+                                        if (resultCode == android.app.Activity.RESULT_OK) {
+                                            android.util.Log.d("HookDebug", "已确认处理完毕，现在执行后续代码");
+
+                                        } else {
+                                            android.util.Log.e("HookDebug", "未成功处理指令");
+                                        }
+                                        try {
+//                                            Method registerZenListener = targetObject.getClass().getMethod("registerZenListener");
+
+                                            // 提示：如果registerZenListener这个方法本身没有被你Hook，
+                                            // 直接用标准的Java反射 registerZenListener.invoke(targetObject); 会更稳妥。
+//                                            XposedBridge.invokeOriginalMethod(registerZenListener, targetObject, null);
+//                                            registerZenListener.invoke(targetObject);
+                                            XposedHelpers.callMethod(param.thisObject, "registerZenListener");
+
+
+                                            android.util.Log.d("HookDebug", "延迟执行：重新注册Listener成功");
+                                        } catch (Exception e) {
+                                            android.util.Log.e("HookDebug", "重新注册Listener异常", e);
+                                        }
+                                    }
+                                },
+                                null, //不指定Handler，默认在当前线程回调
+                                android.app.Activity.RESULT_CANCELED, //初始状态码
+                                null,
+                                null
+                        );
+
+                        android.widget.Toast.makeText(context, "唤醒广播已发送", android.widget.Toast.LENGTH_SHORT).show();
+                    } catch (Exception e) {
+                        android.util.Log.e("HookDebug", "发送广播失败", e);
+                    }
+
+//                    Method registerZenListener = param.thisObject.getClass().getMethod("registerZenListener");
+//                    XposedBridge.invokeOriginalMethod(registerZenListener, param.thisObject, null);
+
+                }
+            });
         }
     }
 

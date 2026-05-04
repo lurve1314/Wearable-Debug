@@ -40,6 +40,10 @@ android {
 }
 
 dependencies {
+    implementation("androidx.appcompat:appcompat:1.7.1")
+    implementation("com.google.android.material:material:1.13.0")
+    implementation("androidx.activity:activity:1.13.0")
+    implementation("androidx.constraintlayout:constraintlayout:2.2.1")
     compileOnly("de.robv.android.xposed:api:82")
     implementation("com.github.kyuubiran:EzXHelper:2.2.1")
     implementation("org.luckypray:dexkit:2.0.7")
