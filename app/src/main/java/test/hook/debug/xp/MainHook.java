@@ -39,6 +39,7 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 import test.hook.debug.xp.ui.DialogView;
 import test.hook.debug.xp.utils.DexKit;
 import test.hook.debug.xp.utils.Save;
+import test.hook.debug.xp.utils.Settings;
 import test.hook.debug.xp.utils.SignUtils;
 
 public class MainHook implements IXposedHookLoadPackage, IXposedHookInitPackageResources, IXposedHookZygoteInit {
@@ -83,6 +84,15 @@ public class MainHook implements IXposedHookLoadPackage, IXposedHookInitPackageR
         view.addNode(Save.Type.WATCHFACE.getText(), v -> {
             Save.status = Save.Type.WATCHFACE;
             gotoDebugPage(loader, context);
+            result.dismiss();
+        });
+
+        view.addNode(Save.Type.TRIAL_WATCHFACE.getText(), v -> {
+            if (Install.handleTrialWatchFace(context)) {
+                Toast.makeText(context, "试用表盘已导出", Toast.LENGTH_SHORT).show();
+            } else {
+                Toast.makeText(context, "试用表盘导出失败", Toast.LENGTH_SHORT).show();
+            }
             result.dismiss();
         });
 
@@ -249,6 +259,14 @@ public class MainHook implements IXposedHookLoadPackage, IXposedHookInitPackageR
                         case WATCHFACE:
                             if (!onHandleWatchFace(loader, context, data)) {
                                 Toast.makeText(context, appResources.getString(Res.fail_watchface), Toast.LENGTH_LONG).show();
+                            }
+                            break;
+                        case TRIAL_WATCHFACE:
+                            // Trial WatchFace is handled directly in dialog, but just in case
+                            if (Install.handleTrialWatchFace(context)) {
+                                Toast.makeText(context, "试用表盘已导出", Toast.LENGTH_SHORT).show();
+                            } else {
+                                Toast.makeText(context, "试用表盘导出失败", Toast.LENGTH_SHORT).show();
                             }
                             break;
                         case FIRMWARE:
@@ -446,14 +464,19 @@ public class MainHook implements IXposedHookLoadPackage, IXposedHookInitPackageR
         EzXHelper.initHandleLoadPackage(loadPackageParam);
         EzXHelper.setLogTag("WearableDebug");
         EzXHelper.setToastTag("WearableDebug");
+        Settings.init();
         DexKit.INSTANCE.initDexKit(loadPackageParam);
-        DisableAd.interceptAd(loadPackageParam.classLoader);
-        DisableAd.disableReport(loadPackageParam.classLoader);
-        DisableAd.hideAqView(loadPackageParam.classLoader);
+        if (Settings.isDisableAdEnabled()) {
+            DisableAd.interceptAd(loadPackageParam.classLoader);
+            DisableAd.disableReport(loadPackageParam.classLoader);
+            DisableAd.hideAqView(loadPackageParam.classLoader);
+        }
 
-        DisableKeepLinkNotify.disableDeviceSystemRedDot(loadPackageParam.classLoader);
-        DisableKeepLinkNotify.disableTabRedDot(loadPackageParam.classLoader);
-        DisableKeepLinkNotify.disableDialog(loadPackageParam.classLoader);
+        if (Settings.isDisableKeepLinkNotifyEnabled()) {
+            DisableKeepLinkNotify.disableDeviceSystemRedDot(loadPackageParam.classLoader);
+            DisableKeepLinkNotify.disableTabRedDot(loadPackageParam.classLoader);
+            DisableKeepLinkNotify.disableDialog(loadPackageParam.classLoader);
+        }
 
         loadHook(loadPackageParam.classLoader);
         DexKit.INSTANCE.closeDexKit();

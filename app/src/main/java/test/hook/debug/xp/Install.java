@@ -3,7 +3,9 @@ package test.hook.debug.xp;
 import android.app.AlertDialog;
 import android.content.Context;
 import android.net.Uri;
+import android.os.Environment;
 import android.widget.ProgressBar;
+import android.widget.Toast;
 
 import com.github.kyuubiran.ezxhelper.ClassUtils;
 import com.github.kyuubiran.ezxhelper.Log;
@@ -17,6 +19,7 @@ import java.io.InputStream;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
+import java.util.Random;
 
 import de.robv.android.xposed.XposedHelpers;
 import test.hook.debug.xp.utils.Save;
@@ -253,5 +256,116 @@ public class Install {
             }
         }
         return tmpFace;
+    }
+
+    /**
+     * 处理试用表盘文件
+     * 1. 从试用目录复制到 Download 目录
+     * 2. 修改 ID (需要二进制修改) -> 暂时保留原 ID (需注意风险)，但必须复制出来
+     *
+     * @param context 上下文
+     * @return true if success
+     */
+    public static boolean handleTrialWatchFace(Context context) {
+        try {
+            // 试用表盘通常路径: Android/data/com.mi.health/files/WatchFace/
+            // 或者 Android/data/com.xiaomi.wearable/files/WatchFace/
+            
+            String pkg = context.getPackageName();
+            File watchFaceDir = new File(context.getExternalFilesDir(null).getParentFile().getParentFile(), pkg + "/files/WatchFace");
+            
+            if (!watchFaceDir.exists()) {
+                // 尝试旧路径
+                watchFaceDir = new File(Environment.getExternalStorageDirectory(), "Android/data/" + pkg + "/files/WatchFace");
+            }
+
+            if (!watchFaceDir.exists() || !watchFaceDir.isDirectory()) {
+                Log.e("WatchFace dir not found: " + watchFaceDir.getAbsolutePath(), null);
+                return false;
+            }
+
+            File[] faceFolders = watchFaceDir.listFiles();
+            if (faceFolders == null || faceFolders.length == 0) {
+                Log.e("No trial watch faces found", null);
+                return false;
+            }
+
+            // 找最新的
+            File latestFolder = null;
+            long lastMod = 0;
+            for (File f : faceFolders) {
+                if (f.lastModified() > lastMod) {
+                    lastMod = f.lastModified();
+                    latestFolder = f;
+                }
+            }
+
+            if (latestFolder == null) return false;
+
+            // 查找 resource.bin
+            File resFile = findResourceFile(latestFolder);
+            if (resFile == null) {
+                Log.e("resource.bin not found in " + latestFolder.getName(), null);
+                return false;
+            }
+
+            // 复制到 Download 目录
+            File downloadDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+            File outputDir = new File(downloadDir, "WearableDebugTrials");
+            if (!outputDir.exists()) outputDir.mkdirs();
+            
+            // 读取原始 ID
+            String originalId = getWatchFaceId(resFile);
+            String newId = generateNewId(originalId);
+            
+            File destFile = new File(outputDir, "watchface_" + System.currentTimeMillis() + ".bin");
+            
+            // 复制文件
+            copyFile(resFile, destFile);
+            
+            // TODO: 修改二进制中的 ID (hard)
+            // 暂时简单提示用户手动修改 ID，或者尝试简单的二进制替换 (如果 ID 长度相同)
+            // 这里为了安全和实现复杂度，先只做提取，后续如果需要自动改 ID 再做。
+            
+            Toast.makeText(context, "已导出表盘到: " + destFile.getAbsolutePath(), Toast.LENGTH_LONG).show();
+            return true;
+
+        } catch (Throwable e) {
+            Log.e(e, "handleTrialWatchFace");
+            return false;
+        }
+    }
+
+    private static File findResourceFile(File dir) {
+        File resource = new File(dir, "resource.bin");
+        if (resource.exists()) return resource;
+        
+        // 递归查找一层
+        File[] files = dir.listFiles();
+        if (files != null) {
+            for (File f : files) {
+                if (f.isDirectory()) {
+                    resource = new File(f, "resource.bin");
+                    if (resource.exists()) return resource;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static String generateNewId(String original) {
+        if (original == null) return String.valueOf(System.currentTimeMillis());
+        // 简单修改前几位防止重复
+        return "trial_" + original; 
+    }
+
+    private static void copyFile(File src, File dest) throws IOException {
+        try (InputStream is = new FileInputStream(src); FileOutputStream os = new FileOutputStream(dest)) {
+            byte[] buffer = new byte[1024];
+            int length;
+            while ((length = is.read(buffer)) > 0) {
+                os.write(buffer, 0, length);
+            }
+        }
     }
 }
