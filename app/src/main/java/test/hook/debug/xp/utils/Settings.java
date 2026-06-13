@@ -10,7 +10,9 @@ import java.util.Properties;
 
 /**
  * Module settings manager using file-based properties on shared storage.
- * Uses /sdcard/ location so both the module app and target app processes can read.
+ * Uses /sdcard/ public root location so both the module app and target app processes can read.
+ * Note: /sdcard/Android/data/xxx/ is scoped storage and only accessible by the owner app.
+ *       Using /sdcard/ root ensures the target app process (com.xiaomi.wearable) can also read it.
  */
 public class Settings {
     private static final String PREF_FILE = "wearable_debug_prefs.properties";
@@ -19,9 +21,10 @@ public class Settings {
     
     public static void init() {
         props = new Properties();
-        // Store on shared storage so both module process and target process can access
+        // Store at sdcard root so any app with storage permission can access
+        // /sdcard/Android/data/xxx/ is scoped and NOT accessible from other apps on Android 11+
         File sdcardDir = Environment.getExternalStorageDirectory();
-        prefFile = new File(sdcardDir, "Android/data/test.hook.debug/" + PREF_FILE);
+        prefFile = new File(sdcardDir, PREF_FILE);
         load();
     }
     
