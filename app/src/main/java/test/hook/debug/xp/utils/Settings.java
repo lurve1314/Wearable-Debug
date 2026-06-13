@@ -1,5 +1,7 @@
 package test.hook.debug.xp.utils;
 
+import android.os.Environment;
+
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -7,8 +9,8 @@ import java.io.IOException;
 import java.util.Properties;
 
 /**
- * Module settings manager using file-based properties
- * More compatible with modern Android/Xposed than XSharedPreferences
+ * Module settings manager using file-based properties on shared storage.
+ * Uses /sdcard/ location so both the module app and target app processes can read.
  */
 public class Settings {
     private static final String PREF_FILE = "wearable_debug_prefs.properties";
@@ -17,16 +19,14 @@ public class Settings {
     
     public static void init() {
         props = new Properties();
-        // Use module's own data directory (applicationId, not Java package name)
-        prefFile = new File("/data/data/" + "test.hook.debug" + "/shared_prefs/" + PREF_FILE);
-        if (!prefFile.exists()) {
-            prefFile = new File("/data/user_de/0/" + "test.hook.debug" + "/shared_prefs/" + PREF_FILE);
-        }
+        // Store on shared storage so both module process and target process can access
+        File sdcardDir = Environment.getExternalStorageDirectory();
+        prefFile = new File(sdcardDir, "Android/data/test.hook.debug/" + PREF_FILE);
         load();
     }
     
     private static void load() {
-        if (prefFile.exists()) {
+        if (prefFile != null && prefFile.exists()) {
             try (FileInputStream fis = new FileInputStream(prefFile)) {
                 props.load(fis);
             } catch (IOException e) {
