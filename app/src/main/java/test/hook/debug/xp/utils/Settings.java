@@ -13,7 +13,7 @@ import de.robv.android.xposed.XposedBridge;
  * This class is NOT used for reading in the module process.
  */
 public class Settings {
-    static final String PREFS_NAME = "wearable_debug_settings";
+    public static final String PREFS_NAME = "wearable_debug_settings";
     private static final String PACKAGE_NAME = "test.hook.debug";
     private static XSharedPreferences xPrefs;
 
