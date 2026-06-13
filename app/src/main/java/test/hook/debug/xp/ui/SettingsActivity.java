@@ -1,5 +1,6 @@
 package test.hook.debug.xp.ui;
 
+import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.widget.Switch;
 import android.widget.LinearLayout;
@@ -12,11 +13,14 @@ import test.hook.debug.xp.utils.Settings;
 
 public class SettingsActivity extends android.app.Activity {
     
+    private SharedPreferences prefs;
+    
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         
-        Settings.init();
+        // Use SharedPreferences directly (module process)
+        prefs = getSharedPreferences(Settings.PREFS_NAME, MODE_PRIVATE);
         
         // 创建设置界面布局
         LinearLayout layout = new LinearLayout(this);
@@ -64,13 +68,13 @@ public class SettingsActivity extends android.app.Activity {
         
         // 开关
         Switch switchView = new Switch(this);
-        boolean value = getSwitchValue(key, defaultValue);
+        boolean value = prefs.getBoolean(key, defaultValue);
         switchView.setChecked(value);
         
         // 点击监听
         final String prefKey = key;
         switchView.setOnCheckedChangeListener((buttonView, isChecked) -> {
-            Settings.setProperty(prefKey, String.valueOf(isChecked));
+            prefs.edit().putBoolean(prefKey, isChecked).commit();
             Toast.makeText(SettingsActivity.this, 
                 isChecked ? title + " 已开启" : title + " 已关闭", 
                 Toast.LENGTH_SHORT).show();
@@ -86,26 +90,5 @@ public class SettingsActivity extends android.app.Activity {
         divider.setLayoutParams(new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, 2));
         layout.addView(divider);
-    }
-    
-    private boolean getSwitchValue(String key, boolean defaultValue) {
-        switch (key) {
-            case "trial_watchface_enabled":
-                return Settings.isTrialWatchFaceEnabled();
-            case "disable_ad_enabled":
-                return Settings.isDisableAdEnabled();
-            case "disable_keep_link_notify_enabled":
-                return Settings.isDisableKeepLinkNotifyEnabled();
-            case "zen_mode_sync_enabled":
-                return Settings.isZenModeSyncEnabled();
-            case "wechat_call_alert_enabled":
-                return Settings.isWeChatCallAlertEnabled();
-            case "oneplus_calendar_fix_enabled":
-                return Settings.isOneplusCalendarFixEnabled();
-            case "debug_log_enabled":
-                return Settings.isDebugLogEnabled();
-            default:
-                return defaultValue;
-        }
     }
 }
