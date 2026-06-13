@@ -17,16 +17,13 @@ import android.widget.Toast;
 import androidx.annotation.NonNull;
 import androidx.annotation.RequiresApi;
 
-import org.luckypray.dexkit.DexKitBridge;
-
 import java.io.File;
 import java.lang.reflect.Method;
-import java.lang.reflect.Proxy;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 
 import io.github.libxposed.api.XposedModule;
-import io.github.libxposed.api.XposedInterface;
 import test.hook.debug.xp.ui.DialogView;
 import test.hook.debug.xp.utils.DexKit;
 import test.hook.debug.xp.utils.Save;
@@ -104,7 +101,7 @@ public class MainHook extends XposedModule {
         }
 
         log(Log.INFO, TAG, "onPackageLoaded: " + packageName);
-        ClassLoader classLoader = param.getClassLoader();
+        ClassLoader classLoader = param.getDefaultClassLoader();
 
         // Initialize DexKit with the target app's source dir
         DexKit.INSTANCE.initDexKit(param.getApplicationInfo().sourceDir);
@@ -311,7 +308,7 @@ public class MainHook extends XposedModule {
             log(Log.INFO, TAG, "Entry point: " + methodStartWebView);
 
             hook(methodStartWebView).intercept(chain -> {
-                Object[] args = chain.getArgs();
+                Object[] args = chain.getArgs().toArray();
                 if (args.length < 2 || moduleContext == null) {
                     return chain.proceed();
                 }
@@ -340,10 +337,10 @@ public class MainHook extends XposedModule {
                 // Intercept onActivityResult
                 hook(findMethod(thirdAppDebugFragment, "onActivityResult", int.class, int.class, Intent.class))
                         .intercept(chain2 -> {
-                            if (((int) chain2.getArgs()[0]) != 10 || ((int) chain2.getArgs()[1]) != -1) {
+                            if (((int) chain2.getArgs().get(0)) != 10 || ((int) chain2.getArgs().get(1)) != -1) {
                                 return chain2.proceed();
                             }
-                            Intent arg = (Intent) chain2.getArgs()[2];
+                            Intent arg = (Intent) chain2.getArgs().get(2);
                             Uri data = arg.getData();
                             if (data == null) {
                                 return null;
@@ -395,7 +392,7 @@ public class MainHook extends XposedModule {
                 Save.sign = (byte[]) findMethod(
                         findClass("test.hook.debug.xp.utils.SignUtils", classLoader),
                         "generateSign", File.class
-                ).invoke(null, (File) chain.getArgs()[0]);
+                ).invoke(null, (File) chain.getArgs().get(0));
                 return chain.proceed();
             });
 
@@ -417,8 +414,8 @@ public class MainHook extends XposedModule {
                                 findClass("android.service.notification.StatusBarNotification", classLoader),
                                 String.class, String.class, String.class);
                         hook(isWeChatIncomingCall).intercept(chain -> {
-                            String title = (String) chain.getArgs()[1];
-                            String text = (String) chain.getArgs()[2];
+                            String title = (String) chain.getArgs().get(1);
+                            String text = (String) chain.getArgs().get(2);
                             boolean result = (boolean) chain.proceed();
 
                             if (result && title != null && text != null) {
@@ -515,11 +512,11 @@ public class MainHook extends XposedModule {
                     log(Log.INFO, TAG, "Found target anonymous class: " + className);
 
                     hook(method).intercept(chain -> {
-                        String pkg = (String) chain.getArgs()[0];
+                        String pkg = (String) chain.getArgs().get(0);
 
                         if ("com.xiaomi.wearable".equals(pkg) || "com.mi.health".equals(pkg)) {
                             long token = android.os.Binder.clearCallingIdentity();
-                            chain.getArgs()[0] = "android";
+                            chain.getArgs().set(0, "android");
                             log(Log.INFO, TAG, "SystemServer: matched Mi Fitness, UID elevated and package name disguised");
 
                             try {

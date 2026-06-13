@@ -4,6 +4,7 @@ kotlin = "2.2.0"
 xposed-api = "102.0.0"
 xposed-service = "102.0.0"
 dexkit = "2.0.7"
+annotation = "1.9.1"
 
 [plugins]
 agp-app = { id = "com.android.application", version.ref = "agp" }
@@ -13,3 +14,4 @@ kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 libxposed-api = { group = "io.github.libxposed", name = "api", version.ref = "xposed-api" }
 libxposed-service = { group = "io.github.libxposed", name = "service", version.ref = "xposed-service" }
 dexkit = { group = "org.luckypray", name = "dexkit", version.ref = "dexkit" }
+annotation = { group = "androidx.annotation", name = "annotation", version.ref = "annotation" }

@@ -72,7 +72,7 @@ public class DisableAd {
             visibleMethod.setAccessible(true);
 
             module.hook(visibleMethod).intercept(chain -> {
-                View view = (View) chain.getArgs()[0];
+                View view = (View) chain.getArgs().get(0);
                 Class<?> clazz = view.getClass();
                 if (clazz.equals(finalAqViewClass) || clazz.equals(finalHealthBannerCardSetViewClass)) {
                     view.setVisibility(View.GONE);
