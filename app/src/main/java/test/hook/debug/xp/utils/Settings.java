@@ -17,10 +17,10 @@ public class Settings {
     
     public static void init() {
         props = new Properties();
-        // Use module's own data directory
-        prefFile = new File("/data/data/" + "test.hook.debug.xp" + "/shared_prefs/" + PREF_FILE);
+        // Use module's own data directory (applicationId, not Java package name)
+        prefFile = new File("/data/data/" + "test.hook.debug" + "/shared_prefs/" + PREF_FILE);
         if (!prefFile.exists()) {
-            prefFile = new File("/data/user_de/0/" + "test.hook.debug.xp" + "/shared_prefs/" + PREF_FILE);
+            prefFile = new File("/data/user_de/0/" + "test.hook.debug" + "/shared_prefs/" + PREF_FILE);
         }
         load();
     }
