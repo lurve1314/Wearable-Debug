@@ -8,7 +8,7 @@ plugins {
 
 android {
     namespace = "test.hook.debug"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "test.hook.debug"
