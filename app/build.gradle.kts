@@ -2,8 +2,8 @@ import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 
 plugins {
-    id("com.android.application")
-    id("org.jetbrains.kotlin.android")
+    alias(libs.plugins.agp.app)
+    alias(libs.plugins.kotlin.android)
 }
 
 android {
@@ -14,8 +14,8 @@ android {
         applicationId = "test.hook.debug"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "2.0"
         ndk {
             abiFilters.add("arm64-v8a")
         }
@@ -30,17 +30,25 @@ android {
             versionNameSuffix = "-debug-" + DateTimeFormatter.ofPattern("yyyyMMddHHmmss").format(LocalDateTime.now())
         }
     }
+
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_1_8
-        targetCompatibility = JavaVersion.VERSION_1_8
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
     }
+
     kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_1_8.toString()
+        jvmTarget = JavaVersion.VERSION_21.toString()
+    }
+
+    packaging {
+        resources {
+            merges += "META-INF/xposed/*"
+        }
     }
 }
 
 dependencies {
-    compileOnly("de.robv.android.xposed:api:82")
-    implementation("com.github.kyuubiran:EzXHelper:2.2.1")
-    implementation("org.luckypray:dexkit:2.0.7")
+    compileOnly(libs.libxposed.api)
+    implementation(libs.libxposed.service)
+    implementation(libs.dexkit)
 }

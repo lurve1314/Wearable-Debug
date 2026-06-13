@@ -1,26 +1,22 @@
-# Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.kts.
-#
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
-
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
-
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
-
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
-
--keep class test.hook.debug.xp.MainHook {
+# libxposed API 102
+-dontwarn io.github.libxposed.annotation.**
+-adaptresourcefilecontents META-INF/xposed/java_init.list
+-keep,allowoptimization,allowobfuscation public class * extends io.github.libxposed.api.XposedModule {
     public <init>();
-    public void handleLoadPackage(de.robv.android.xposed.callbacks.XC_LoadPackage$LoadPackageParam);
 }
+
+# DexKit
+-dontwarn org.luckypray.**
+
+# Keep all hook-related classes
+-keep class test.hook.debug.xp.MainHook { *; }
+-keep class test.hook.debug.xp.DisableAd { *; }
+-keep class test.hook.debug.xp.DisableKeepLinkNotify { *; }
+-keep class test.hook.debug.xp.Install { *; }
+-keep class test.hook.debug.xp.DeviceLog { *; }
+-keep class test.hook.debug.xp.EncryptKey { *; }
+-keep class test.hook.debug.xp.EntryPoint { *; }
+-keep class test.hook.debug.xp.Callback { *; }
+-keep class test.hook.debug.xp.Res { *; }
+-keep class test.hook.debug.xp.ui.** { *; }
+-keep class test.hook.debug.xp.utils.** { *; }

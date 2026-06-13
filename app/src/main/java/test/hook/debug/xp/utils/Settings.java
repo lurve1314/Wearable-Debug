@@ -1,40 +1,51 @@
 package test.hook.debug.xp.utils;
 
-import de.robv.android.xposed.XSharedPreferences;
-import de.robv.android.xposed.XposedBridge;
+import android.content.SharedPreferences;
+
+import io.github.libxposed.api.XposedModule;
 
 /**
- * Module settings manager.
+ * Module settings manager using API 102 getRemotePreferences().
  *
- * In hook process (target app): uses XSharedPreferences to read settings
- * written by the module's SettingsActivity.
+ * In hook process: uses XposedModule.getRemotePreferences() to read/write settings.
+ * In module app process (SettingsActivity): uses regular SharedPreferences.
  *
- * In module process (SettingsActivity): uses regular SharedPreferences directly.
- * This class is NOT used for reading in the module process.
+ * Both access the same underlying storage via the framework's cross-process mechanism.
  */
 public class Settings {
     public static final String PREFS_NAME = "wearable_debug_settings";
-    private static final String PACKAGE_NAME = "test.hook.debug";
-    private static XSharedPreferences xPrefs;
 
-    public static void init() {
+    private static XposedModule module;
+    private static SharedPreferences remotePrefs;
+
+    /**
+     * Initialize with the XposedModule instance (called from MainHook).
+     */
+    public static void init(XposedModule m) {
+        module = m;
         try {
-            xPrefs = new XSharedPreferences(PACKAGE_NAME, PREFS_NAME);
-            xPrefs.makeWorldReadable();
-            XposedBridge.log("WearableDebug: Settings.init() - XSharedPreferences loaded successfully");
+            remotePrefs = module.getRemotePreferences(PREFS_NAME);
         } catch (Throwable e) {
-            xPrefs = null;
-            XposedBridge.log("WearableDebug: Settings.init() - XSharedPreferences failed: " + e.getMessage());
+            module.log(android.util.Log.ERROR, "WearableDebug", "Settings.init() failed", e);
+            remotePrefs = null;
         }
     }
 
     private static boolean getBoolean(String key, boolean defaultValue) {
-        if (xPrefs == null) return defaultValue;
+        if (remotePrefs == null) return defaultValue;
         try {
-            xPrefs.reload();
-            return xPrefs.getBoolean(key, defaultValue);
+            return remotePrefs.getBoolean(key, defaultValue);
         } catch (Throwable e) {
             return defaultValue;
+        }
+    }
+
+    public static void setProperty(String key, String value) {
+        if (remotePrefs == null) return;
+        try {
+            remotePrefs.edit().putBoolean(key, Boolean.parseBoolean(value)).apply();
+        } catch (Throwable e) {
+            // ignore
         }
     }
 
