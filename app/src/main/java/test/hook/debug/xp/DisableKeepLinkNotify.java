@@ -1,8 +1,5 @@
 package test.hook.debug.xp;
 
-import com.github.kyuubiran.ezxhelper.HookFactory;
-import com.github.kyuubiran.ezxhelper.Log;
-
 import org.luckypray.dexkit.DexKitBridge;
 import org.luckypray.dexkit.query.FindMethod;
 import org.luckypray.dexkit.query.matchers.MethodMatcher;
@@ -13,18 +10,21 @@ import org.luckypray.dexkit.result.UsingFieldData;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 
-import de.robv.android.xposed.XC_MethodReplacement;
-import de.robv.android.xposed.XposedHelpers;
+import io.github.libxposed.api.XposedModule;
 import test.hook.debug.xp.utils.DexKit;
 
 /**
  * 关闭3.46.0i版本中出现的连接保护弹窗和红点提示
+ * API 102 版本 - 移除 XposedHelpers/HookFactory 依赖
  */
 public class DisableKeepLinkNotify {
-    public static void disableDeviceSystemRedDot(ClassLoader loader) {
+    private static final String TAG = "DisableKeepLinkNotify";
+
+    public static void disableDeviceSystemRedDot(ClassLoader loader, XposedModule module) {
         try {
-            Class<?> target = XposedHelpers.findClass("com.xiaomi.fitness.device.manager.export.bean.TabContentItem", loader);
+            Class<?> target = Class.forName("com.xiaomi.fitness.device.manager.export.bean.TabContentItem", false, loader);
             DexKitBridge bridge = DexKit.INSTANCE.getDexKitBridge();
             ClassData classData = bridge.getClassData(target);
             MethodDataList method = classData.getMethods().findMethod(FindMethod.create().matcher(
@@ -53,42 +53,39 @@ public class DisableKeepLinkNotify {
             for (int i = 0; i < method.size(); i++) {
                 MethodData methodData = method.get(i);
                 Constructor<?> constructor = methodData.getConstructorInstance(loader);
-                HookFactory.createConstructorAfterHook(constructor, methodHookParam -> {
+                module.hook(constructor).intercept(chain -> {
                     try {
-                        field.set(methodHookParam.thisObject, null);
+                        field.set(chain.getThisObject(), null);
                     } catch (IllegalAccessException e) {
-                        Log.e(e, "");
+                        module.log(android.util.Log.ERROR, TAG, "Failed to set field", e);
                     }
+                    return chain.proceed();
                 });
             }
         } catch (NoSuchMethodError | Exception e) {
-            Log.e("Failed to disable red dot for device settings", e);
+            module.log(android.util.Log.ERROR, TAG, "Failed to disable red dot for device settings", e);
         }
     }
 
-    public static void disableTabRedDot(ClassLoader loader) {
+    public static void disableTabRedDot(ClassLoader loader, XposedModule module) {
         try {
-            XposedHelpers.findAndHookMethod("com.xiaomi.fitness.main.MainActivity", loader, "refreshDeviceTabIcon", new XC_MethodReplacement() {
-                @Override
-                protected Object replaceHookedMethod(MethodHookParam param) throws Throwable {
-                    return null;
-                }
-            });
+            Class<?> mainActivity = Class.forName("com.xiaomi.fitness.main.MainActivity", false, loader);
+            Method refreshDeviceTabIcon = mainActivity.getDeclaredMethod("refreshDeviceTabIcon");
+            refreshDeviceTabIcon.setAccessible(true);
+            module.hook(refreshDeviceTabIcon).intercept(chain -> null);
         } catch (NoSuchMethodError | Exception e) {
-            Log.e("Failed to disable red dot for tab", e);
+            module.log(android.util.Log.ERROR, TAG, "Failed to disable red dot for tab", e);
         }
     }
 
-    public static void disableDialog(ClassLoader loader) {
+    public static void disableDialog(ClassLoader loader, XposedModule module) {
         try {
-            XposedHelpers.findAndHookMethod("com.xiaomi.fitness.main.MainActivity", loader, "showKeepLinkDialog", new XC_MethodReplacement() {
-                @Override
-                protected Object replaceHookedMethod(MethodHookParam param) throws Throwable {
-                    return null;
-                }
-            });
+            Class<?> mainActivity = Class.forName("com.xiaomi.fitness.main.MainActivity", false, loader);
+            Method showKeepLinkDialog = mainActivity.getDeclaredMethod("showKeepLinkDialog");
+            showKeepLinkDialog.setAccessible(true);
+            module.hook(showKeepLinkDialog).intercept(chain -> null);
         } catch (NoSuchMethodError | Exception e) {
-            Log.e("Failed to disable keep link dialog", e);
+            module.log(android.util.Log.ERROR, TAG, "Failed to disable keep link dialog", e);
         }
     }
 }

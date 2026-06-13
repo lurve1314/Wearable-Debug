@@ -9,66 +9,156 @@ import android.content.Intent;
 import android.content.res.Resources;
 import android.net.Uri;
 import android.os.Build;
-import android.os.Bundle;
+import android.util.Log;
 import android.widget.EditText;
 import android.widget.Toast;
 
-import com.github.kyuubiran.ezxhelper.ClassUtils;
-import com.github.kyuubiran.ezxhelper.EzXHelper;
-import com.github.kyuubiran.ezxhelper.HookFactory;
-import com.github.kyuubiran.ezxhelper.Log;
-import com.github.kyuubiran.ezxhelper.finders.MethodFinder;
+import androidx.annotation.NonNull;
+import androidx.annotation.RequiresApi;
 
-import org.jetbrains.annotations.Nullable;
+import org.luckypray.dexkit.DexKitBridge;
 
 import java.io.File;
 import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 import java.util.Arrays;
-import java.util.Locale;
 import java.util.Map;
 
-import de.robv.android.xposed.IXposedHookInitPackageResources;
-import de.robv.android.xposed.IXposedHookLoadPackage;
-import de.robv.android.xposed.IXposedHookZygoteInit;
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XC_MethodReplacement;
-import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
-import de.robv.android.xposed.callbacks.XC_InitPackageResources;
-import de.robv.android.xposed.callbacks.XC_LoadPackage;
+import io.github.libxposed.api.XposedModule;
+import io.github.libxposed.api.XposedInterface;
 import test.hook.debug.xp.ui.DialogView;
 import test.hook.debug.xp.utils.DexKit;
 import test.hook.debug.xp.utils.Save;
 import test.hook.debug.xp.utils.Settings;
-import test.hook.debug.xp.utils.SignUtils;
 
-public class MainHook implements IXposedHookLoadPackage, IXposedHookInitPackageResources, IXposedHookZygoteInit {
+/**
+ * MainHook - API 102 XposedModule entry point.
+ *
+ * Replaces old IXposedHookLoadPackage + IXposedHookInitPackageResources + IXposedHookZygoteInit.
+ */
+public class MainHook extends XposedModule {
+    private static final String TAG = "WearableDebug";
+    private static Context moduleContext;
+
     public MainHook() {
     }
 
-    private static void gotoDebugPage(ClassLoader classLoader, Context activity) {
+    /**
+     * Get a static method by name from a class.
+     */
+    private static Method findStaticMethod(String className, ClassLoader cl, String methodName, Class<?>... paramTypes) throws ClassNotFoundException, NoSuchMethodException {
+        Class<?> clazz = Class.forName(className, false, cl);
+        Method m = clazz.getDeclaredMethod(methodName, paramTypes);
+        m.setAccessible(true);
+        return m;
+    }
+
+    /**
+     * Find a method by name in a class.
+     */
+    private static Method findMethod(Class<?> clazz, String methodName, Class<?>... paramTypes) throws NoSuchMethodException {
+        Method m = clazz.getDeclaredMethod(methodName, paramTypes);
+        m.setAccessible(true);
+        return m;
+    }
+
+    /**
+     * Get a class by name, returns null if not found.
+     */
+    private static Class<?> findClass(String name, ClassLoader cl) {
         try {
-            Class<?> xmsManager = XposedHelpers.findClass("com.xms.wearable.export.XmsManager", classLoader);
-            Object companionObj = XposedHelpers.getStaticObjectField(xmsManager, "Companion");
-
-            Class<?> xmsManagerExtKt = XposedHelpers.findClass("com.xms.wearable.export.XmsManagerExtKt", classLoader);
-            Object instance = XposedHelpers.callStaticMethod(xmsManagerExtKt, "getInstance", new Class<?>[]{XposedHelpers.findClass("com.xms.wearable.export.XmsManager$Companion", classLoader)}, companionObj);
-
-            XposedHelpers.callMethod(instance, "gotoDebugPage", new Class<?>[]{Activity.class}, activity);
-        } catch (Throwable e) {
-            Log.e(e, "gotoDebugPage");
+            return Class.forName(name, false, cl);
+        } catch (ClassNotFoundException e) {
+            return null;
         }
     }
 
-    private static AlertDialog.Builder createWarningDialog(Context context) {
+    @Override
+    public void onModuleLoaded(@NonNull ModuleLoadedParam param) {
+        log(Log.INFO, TAG, "onModuleLoaded: " + param.getProcessName());
+    }
+
+    @Override
+    @RequiresApi(Build.VERSION_CODES.Q)
+    public void onSystemServerStarting(@NonNull SystemServerStartingParam param) {
+        Settings.init(this);
+        if (Settings.isZenModeSyncEnabled()) {
+            loadHookForApi35Zen(param.getClassLoader());
+        }
+    }
+
+    @Override
+    @RequiresApi(Build.VERSION_CODES.Q)
+    public void onPackageLoaded(@NonNull PackageLoadedParam param) {
+        String packageName = param.getPackageName();
+        Settings.init(this);
+
+        if ("android".equals(packageName)) {
+            // Android system server - zen mode hook handled in onSystemServerStarting
+            return;
+        }
+
+        if (!"com.xiaomi.wearable".equals(packageName) && !"com.mi.health".equals(packageName)) {
+            return;
+        }
+
+        log(Log.INFO, TAG, "onPackageLoaded: " + packageName);
+        ClassLoader classLoader = param.getClassLoader();
+
+        // Initialize DexKit with the target app's source dir
+        DexKit.INSTANCE.initDexKit(param.getApplicationInfo().sourceDir);
+
+        // 广告屏蔽
+        if (Settings.isDisableAdEnabled()) {
+            DisableAd.interceptAd(classLoader, this);
+            DisableAd.disableReport(classLoader, this);
+            DisableAd.hideAqView(classLoader, this);
+        }
+
+        // 连接保护通知屏蔽
+        if (Settings.isDisableKeepLinkNotifyEnabled()) {
+            DisableKeepLinkNotify.disableDeviceSystemRedDot(classLoader, this);
+            DisableKeepLinkNotify.disableTabRedDot(classLoader, this);
+            DisableKeepLinkNotify.disableDialog(classLoader, this);
+        }
+
+        // Main hooks
+        loadHook(classLoader);
+
+        DexKit.INSTANCE.closeDexKit();
+    }
+
+    private void gotoDebugPage(ClassLoader classLoader, Activity activity) {
+        try {
+            Class<?> xmsManager = findClass("com.xms.wearable.export.XmsManager", classLoader);
+            if (xmsManager == null) return;
+            Object companionObj = xmsManager.getDeclaredField("Companion").get(null);
+
+            Class<?> xmsManagerExtKt = findClass("com.xms.wearable.export.XmsManagerExtKt", classLoader);
+            if (xmsManagerExtKt == null) return;
+
+            Method getInstance = xmsManagerExtKt.getDeclaredMethod("getInstance",
+                    findClass("com.xms.wearable.export.XmsManager$Companion", classLoader));
+            getInstance.setAccessible(true);
+            Object instance = getInstance.invoke(null, companionObj);
+
+            Method gotoDebug = instance.getClass().getDeclaredMethod("gotoDebugPage", Activity.class);
+            gotoDebug.setAccessible(true);
+            gotoDebug.invoke(instance, activity);
+        } catch (Throwable e) {
+            log(Log.ERROR, TAG, "gotoDebugPage", e);
+        }
+    }
+
+    private AlertDialog.Builder createWarningDialog(Context context) {
         AlertDialog.Builder builder = new AlertDialog.Builder(context);
-        builder.setTitle(context.getString(Res.firmware_warning_title));
-        builder.setMessage(context.getString(Res.firmware_warning));
+        builder.setTitle(Res.getString(Res.firmware_warning_title));
+        builder.setMessage(Res.getString(Res.firmware_warning));
         builder.setCancelable(false);
         return builder;
     }
 
-    private static Dialog createSelectDialog(ClassLoader loader, Context context) {
+    private Dialog createSelectDialog(ClassLoader loader, Context context) {
         AlertDialog.Builder builder = new AlertDialog.Builder(context);
         DialogView view = DialogView.create(context);
 
@@ -77,13 +167,13 @@ public class MainHook implements IXposedHookLoadPackage, IXposedHookInitPackageR
 
         view.addNode(Save.Type.APP.getText(), v -> {
             Save.status = Save.Type.APP;
-            gotoDebugPage(loader, context);
+            gotoDebugPage(loader, (Activity) context);
             result.dismiss();
         });
 
         view.addNode(Save.Type.WATCHFACE.getText(), v -> {
             Save.status = Save.Type.WATCHFACE;
-            gotoDebugPage(loader, context);
+            gotoDebugPage(loader, (Activity) context);
             result.dismiss();
         });
 
@@ -100,7 +190,7 @@ public class MainHook implements IXposedHookLoadPackage, IXposedHookInitPackageR
             AlertDialog.Builder warningDialog = createWarningDialog(context);
             warningDialog.setPositiveButton("OK", (dialog, which) -> {
                 Save.status = Save.Type.FIRMWARE;
-                gotoDebugPage(loader, context);
+                gotoDebugPage(loader, (Activity) context);
             });
             warningDialog.setNegativeButton("Cancel", (dialog, which) -> dialog.cancel());
             warningDialog.show();
@@ -108,29 +198,29 @@ public class MainHook implements IXposedHookLoadPackage, IXposedHookInitPackageR
         });
 
         view.addNode(Save.Type.PULL_LOG.getText(), v -> {
-            DeviceLog.pullLog(loader, new Callback<String>() {
+            DeviceLog.pullLog(loader, this, new Callback<String>() {
                 @Override
-                public void onError(String msg, @Nullable Throwable e) {
-                    Toast.makeText(context, String.format(Locale.getDefault(), "%s: %s\n%s",
-                                    context.getString(Res.fail_log), msg, android.util.Log.getStackTraceString(e)),
+                public void onError(String msg, Throwable e) {
+                    Toast.makeText(context, String.format(java.util.Locale.getDefault(), "%s: %s\n%s",
+                                    Res.getString(Res.fail_log), msg, Log.getStackTraceString(e)),
                             Toast.LENGTH_LONG).show();
                 }
 
                 @Override
                 public void onSuccess(String path) {
-                    Toast.makeText(context, String.format(Locale.getDefault(), "%s: %s", context.getString(Res.success_log), path),
-                            Toast.LENGTH_LONG).show();
+                    Toast.makeText(context, String.format(java.util.Locale.getDefault(), "%s: %s",
+                            Res.getString(Res.success_log), path), Toast.LENGTH_SHORT).show();
                 }
             });
             result.dismiss();
         });
 
         view.addNode(Save.Type.ENCRYPT_KEY.getText(), v -> {
-            EncryptKey.showEncryptKey(loader, new Callback<Map<String, String[]>>() {
+            EncryptKey.showEncryptKey(loader, this, new Callback<Map<String, String[]>>() {
                 @Override
-                public void onError(String msg, @Nullable Throwable e) {
-                    Toast.makeText(context, String.format(Locale.getDefault(), "%s: %s\n%s",
-                                    context.getString(Res.fail_log), msg, android.util.Log.getStackTraceString(e)),
+                public void onError(String msg, Throwable e) {
+                    Toast.makeText(context, String.format(java.util.Locale.getDefault(), "%s: %s\n%s",
+                                    Res.getString(Res.fail_log), msg, Log.getStackTraceString(e)),
                             Toast.LENGTH_LONG).show();
                 }
 
@@ -157,351 +247,301 @@ public class MainHook implements IXposedHookLoadPackage, IXposedHookInitPackageR
         return result;
     }
 
-    /**
-     * 处理应用安装
-     */
     private static void onHandleApp(Object thisObj, Intent intent) {
-        XposedHelpers.callMethod(thisObj, "prepareInstall",
-                new Class<?>[]{String.class, Intent.class}, "thirdapp.rpk", intent);
+        try {
+            Method prepareInstall = findMethod(thisObj.getClass(), "prepareInstall", String.class, Intent.class);
+            prepareInstall.invoke(thisObj, "thirdapp.rpk", intent);
+        } catch (Throwable e) {
+            Log.e(TAG, "onHandleApp", e);
+        }
     }
 
-    /**
-     * 处理表盘安装
-     */
-    private static boolean onHandleWatchFace(ClassLoader loader, Context context, Uri data) throws Throwable {
+    private boolean onHandleWatchFace(ClassLoader loader, Context context, Uri data) throws Throwable {
         File tmpFace = Install.saveTmpFile(context, data);
         if (tmpFace == null) {
             return false;
         }
-        Install.installWatchFace(loader, tmpFace, context);
+        Install.installWatchFace(loader, tmpFace, context, this);
         return true;
     }
 
-    /**
-     * 处理固件安装
-     */
-    private static boolean onHandleFirmware(ClassLoader loader, Context context, Uri data) throws Throwable {
+    private boolean onHandleFirmware(ClassLoader loader, Context context, Uri data) throws Throwable {
         File tmpFace = Install.saveTmpFile(context, data);
         if (tmpFace == null) {
             return false;
         }
-        Install.invokeUpdate(loader, context, tmpFace.getAbsolutePath());
+        Install.invokeUpdate(loader, context, tmpFace.getAbsolutePath(), this);
         return true;
     }
 
     @SuppressLint("DiscouragedApi")
-    private static void loadHook(ClassLoader classLoader) throws ClassNotFoundException {
-        // 使用关于页的 Activity 初始化 EzXHelper 的 context
-        Class<?> clazzAboutActivity = ClassUtils.loadClass("com.xiaomi.fitness.about.AboutActivity", null);
-        Method methodOnCreate = MethodFinder.fromClass(clazzAboutActivity).filterByName("onCreate").first();
-        HookFactory.createMethodHook(methodOnCreate, hookFactory -> hookFactory.before(param -> EzXHelper.initAppContext((Activity) param.thisObject, false)));
-
-        Class<?> thirdAppDebugFragment = XposedHelpers.findClass("com.xiaomi.xms.wearable.ui.debug.ThirdAppDebugFragment", classLoader);
-        if (thirdAppDebugFragment == null) {
-            Log.e("ThirdAppDebugFragment not found", null);
-            return;
-        }
-
-        Method methodStartWebView = EntryPoint.findEntryPoint();
-        if (methodStartWebView == null) {
-            Log.e("Current version is not supported", null);
-            return;
-        }
-
-        Log.i("Entry point " + methodStartWebView.toString(), null);
-
-        HookFactory.createMethodHook(methodStartWebView, hookFactory -> hookFactory.before(param -> {
-            // 获取用户协议字符串
-            Context appContext = EzXHelper.getAppContext();
-            Resources appResources = appContext.getResources();
-            int identifierAboutPrivacyLicenseAgreement = appResources.getIdentifier("about_privacy_license_agreement", "string", EzXHelper.hostPackageName);
-            String stringAboutPrivacyLicenseAgreement = appResources.getString(identifierAboutPrivacyLicenseAgreement);
-
-            // 若匹配，则拦截跳转
-            if (!stringAboutPrivacyLicenseAgreement.equals(param.args[1])) {
+    private void loadHook(ClassLoader classLoader) {
+        try {
+            // Initialize context from AboutActivity
+            Class<?> clazzAboutActivity = findClass("com.xiaomi.fitness.about.AboutActivity", classLoader);
+            if (clazzAboutActivity == null) {
+                log(Log.ERROR, TAG, "AboutActivity not found");
                 return;
             }
 
-            ClassLoader loader = EzXHelper.getSafeClassLoader();
-
-            // 弹出选择当前安装模式
-            Dialog dialog = createSelectDialog(loader, appContext);
-            dialog.show();
-
-            // 设置当前模式显示
-            Method bindView = MethodFinder.fromClass(thirdAppDebugFragment).filterByName("bindView").firstOrNull();
-            if (bindView != null) {
-                HookFactory.createMethodHook(bindView, hookFactory1 -> hookFactory1.after(methodHookParam ->
-                        XposedHelpers.callMethod(methodHookParam.thisObject, "setTitle",
-                                new Class[]{String.class}, Save.status.getText())));
-            }
-
-
-            // 拦截文件选择
-            XposedHelpers.findAndHookMethod(thirdAppDebugFragment, "onActivityResult", int.class, int.class, Intent.class, new XC_MethodReplacement() {
-                @Override
-                protected Object replaceHookedMethod(MethodHookParam param) throws Throwable {
-                    if (((int) param.args[0]) != 10 || ((int) param.args[1]) != -1) {
-                        return null;
-                    }
-                    Intent arg = (Intent) param.args[2];
-                    Uri data = arg.getData();
-                    if (data == null) {
-                        return null;
-                    }
-
-                    Context context = (Context) XposedHelpers.callMethod(param.thisObject, "getMActivity");
-
-                    switch (Save.status) {
-                        case APP:
-                            onHandleApp(param.thisObject, arg);
-                            break;
-                        case WATCHFACE:
-                            if (!onHandleWatchFace(loader, context, data)) {
-                                Toast.makeText(context, appResources.getString(Res.fail_watchface), Toast.LENGTH_LONG).show();
-                            }
-                            break;
-                        case TRIAL_WATCHFACE:
-                            // Trial WatchFace is handled directly in dialog, but just in case
-                            if (Install.handleTrialWatchFace(context)) {
-                                Toast.makeText(context, "试用表盘已导出", Toast.LENGTH_SHORT).show();
-                            } else {
-                                Toast.makeText(context, "试用表盘导出失败", Toast.LENGTH_SHORT).show();
-                            }
-                            break;
-                        case FIRMWARE:
-                            if (!onHandleFirmware(loader, context, data)) {
-                                Toast.makeText(context, appResources.getString(Res.fail_firmware), Toast.LENGTH_LONG).show();
-                            }
-                            break;
-                        default:
-                            throw new IllegalStateException("Unexpected value: " + Save.status);
-                    }
-
-                    return null;
+            Method methodOnCreate = findMethod(clazzAboutActivity, "onCreate", Bundle.class);
+            hook(methodOnCreate).intercept(chain -> {
+                Activity activity = (Activity) chain.getThisObject();
+                if (moduleContext == null) {
+                    moduleContext = activity;
+                    // Initialize Res
+                    Res.init(moduleContext);
                 }
+                return chain.proceed();
             });
-            param.setResult(null);
-        }));
 
-        XposedHelpers.findAndHookMethod(thirdAppDebugFragment, "unInstallApp", new XC_MethodReplacement() {
-            @Override
-            protected Object replaceHookedMethod(MethodHookParam methodHookParam) throws Throwable {
-                return Install.unInstall(classLoader, methodHookParam.thisObject);
+            Class<?> thirdAppDebugFragment = findClass("com.xiaomi.xms.wearable.ui.debug.ThirdAppDebugFragment", classLoader);
+            if (thirdAppDebugFragment == null) {
+                log(Log.ERROR, TAG, "ThirdAppDebugFragment not found");
+                return;
             }
-        });
 
-        XposedHelpers.findAndHookMethod(thirdAppDebugFragment, "sendThirdAppFile", File.class, int.class, new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                super.beforeHookedMethod(param);
-                Save.sign = SignUtils.generateSign((File) param.args[0]);
+            Method methodStartWebView = EntryPoint.findEntryPoint(classLoader, this);
+            if (methodStartWebView == null) {
+                log(Log.ERROR, TAG, "Entry point not found - current version may not be supported");
+                return;
             }
-        });
 
-        // 安装表盘时不限制包名
-        XposedHelpers.findAndHookMethod(thirdAppDebugFragment, "isPackageReady", new XC_MethodHook() {
-            @Override
-            protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                super.afterHookedMethod(param);
+            log(Log.INFO, TAG, "Entry point: " + methodStartWebView);
+
+            hook(methodStartWebView).intercept(chain -> {
+                Object[] args = chain.getArgs();
+                if (args.length < 2 || moduleContext == null) {
+                    return chain.proceed();
+                }
+
+                Context appContext = moduleContext;
+                Resources appResources = appContext.getResources();
+                int identifierAboutPrivacyLicenseAgreement = appResources.getIdentifier(
+                        "about_privacy_license_agreement", "string", "com.xiaomi.wearable");
+                if (identifierAboutPrivacyLicenseAgreement == 0) {
+                    identifierAboutPrivacyLicenseAgreement = appResources.getIdentifier(
+                            "about_privacy_license_agreement", "string", "com.mi.health");
+                }
+                if (identifierAboutPrivacyLicenseAgreement == 0) {
+                    return chain.proceed();
+                }
+                String stringAboutPrivacyLicenseAgreement = appResources.getString(identifierAboutPrivacyLicenseAgreement);
+
+                if (!stringAboutPrivacyLicenseAgreement.equals(args[1])) {
+                    return chain.proceed();
+                }
+
+                Activity activity = (Activity) appContext;
+                Dialog dialog = createSelectDialog(classLoader, activity);
+                activity.runOnUiThread(dialog::show);
+
+                // Intercept onActivityResult
+                hook(findMethod(thirdAppDebugFragment, "onActivityResult", int.class, int.class, Intent.class))
+                        .intercept(chain2 -> {
+                            if (((int) chain2.getArgs()[0]) != 10 || ((int) chain2.getArgs()[1]) != -1) {
+                                return chain2.proceed();
+                            }
+                            Intent arg = (Intent) chain2.getArgs()[2];
+                            Uri data = arg.getData();
+                            if (data == null) {
+                                return null;
+                            }
+
+                            Method getMActivity = findMethod(thirdAppDebugFragment, "getMActivity");
+                            Context context = (Context) getMActivity.invoke(chain2.getThisObject());
+
+                            switch (Save.status) {
+                                case APP:
+                                    onHandleApp(chain2.getThisObject(), arg);
+                                    break;
+                                case WATCHFACE:
+                                    if (!onHandleWatchFace(classLoader, context, data)) {
+                                        Toast.makeText(context, Res.getString(Res.fail_watchface), Toast.LENGTH_LONG).show();
+                                    }
+                                    break;
+                                case TRIAL_WATCHFACE:
+                                    if (Install.handleTrialWatchFace(context)) {
+                                        Toast.makeText(context, "试用表盘已导出", Toast.LENGTH_SHORT).show();
+                                    } else {
+                                        Toast.makeText(context, "试用表盘导出失败", Toast.LENGTH_SHORT).show();
+                                    }
+                                    break;
+                                case FIRMWARE:
+                                    if (!onHandleFirmware(classLoader, context, data)) {
+                                        Toast.makeText(context, Res.getString(Res.fail_firmware), Toast.LENGTH_LONG).show();
+                                    }
+                                    break;
+                                default:
+                                    throw new IllegalStateException("Unexpected value: " + Save.status);
+                            }
+                            return null;
+                        });
+
+                return null;
+            });
+
+            // unInstallApp
+            Method unInstallAppMethod = findMethod(thirdAppDebugFragment, "unInstallApp");
+            hook(unInstallAppMethod).intercept(chain -> {
+                Install.unInstall(classLoader, chain.getThisObject(), this);
+                return null;
+            });
+
+            // sendThirdAppFile - save sign
+            Method sendThirdAppFile = findMethod(thirdAppDebugFragment, "sendThirdAppFile", File.class, int.class);
+            hook(sendThirdAppFile).intercept(chain -> {
+                Save.sign = (byte[]) findMethod(
+                        findClass("test.hook.debug.xp.utils.SignUtils", classLoader),
+                        "generateSign", File.class
+                ).invoke(null, (File) chain.getArgs()[0]);
+                return chain.proceed();
+            });
+
+            // isPackageReady - don't restrict package name for watchface install
+            Method isPackageReady = findMethod(thirdAppDebugFragment, "isPackageReady");
+            hook(isPackageReady).intercept(chain -> {
                 if (Save.status == Save.Type.APP) {
-                    return;
+                    return chain.proceed();
                 }
-                param.setResult(true);
-            }
-        });
-
-        // 微信通话6s强提醒
-        if (Settings.isWeChatCallAlertEnabled()) {
-            XposedHelpers.findAndHookMethod("com.xiaomi.fitness.notify.util.NotificationFilterHelper", classLoader, "isWeChatIncomingCall", "android.service.notification.StatusBarNotification", "java.lang.String", "java.lang.String", new XC_MethodHook() {
-                @Override
-                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                    super.afterHookedMethod(param);
-//                StatusBarNotification sbn = (StatusBarNotification) param.args[0];
-                    String title = (String) param.args[1];
-                    String text = (String) param.args[2];
-                    boolean isWeChatIncomingCall = (boolean) param.getResult();
-//                XposedBridge.log(title + text + isWeChatIncomingCall);
-                    if (isWeChatIncomingCall && title != null && text != null) {
-                        Class<?> BleNotifyModelClass = classLoader.loadClass("com.xiaomi.fitness.notify.BleNotifyModel");
-                        Object bleNotifyModel = XposedHelpers.getStaticObjectField(BleNotifyModelClass, "INSTANCE");
-                        XposedHelpers.callMethod(bleNotifyModel, "updatePhoneStatus", 1);
-                        Class<?> InCallClass = classLoader.loadClass("com.xiaomi.fitness.settingitem.settingitem.InCall");
-                        XposedHelpers.callMethod(bleNotifyModel, "addCallNotification", new Class<?>[]{String.class, String.class, int.class, InCallClass}, text, null, 1, null);
-
-                        new Thread(() -> {
-                            try {
-                                Thread.sleep(6000);
-                            } catch (InterruptedException ignored) {
-                            }
-                            XposedHelpers.callMethod(bleNotifyModel, "updatePhoneStatus", 0);
-                            XposedHelpers.callMethod(bleNotifyModel, "alertInCallStop");
-                        }).start();
-                    }
-                }
+                return true;
             });
-        }
 
-        // 显示系统设置-勿扰模式同步入口，并执行相关逻辑
-        if (Settings.isZenModeSyncEnabled()) {
-            try {
-                XposedHelpers.findAndHookMethod("com.xiaomi.fitness.devicesettings.utils.ZenUtils", classLoader, "isSupportZenMode", classLoader.loadClass("com.xiaomi.fitness.device.manager.export.WearableDeviceModel"), new XC_MethodHook() {
-                    @Override
-                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                        super.beforeHookedMethod(param);
-                        param.setResult(true);
+            // 微信通话6s强提醒
+            if (Settings.isWeChatCallAlertEnabled()) {
+                try {
+                    Class<?> nhc = findClass("com.xiaomi.fitness.notify.util.NotificationFilterHelper", classLoader);
+                    if (nhc != null) {
+                        Method isWeChatIncomingCall = findMethod(nhc, "isWeChatIncomingCall",
+                                findClass("android.service.notification.StatusBarNotification", classLoader),
+                                String.class, String.class, String.class);
+                        hook(isWeChatIncomingCall).intercept(chain -> {
+                            String title = (String) chain.getArgs()[1];
+                            String text = (String) chain.getArgs()[2];
+                            boolean result = (boolean) chain.proceed();
+
+                            if (result && title != null && text != null) {
+                                try {
+                                    Class<?> bleNotifyModelClass = findClass("com.xiaomi.fitness.notify.BleNotifyModel", classLoader);
+                                    Object bleNotifyModel = bleNotifyModelClass.getDeclaredField("INSTANCE").get(null);
+                                    Method updatePhoneStatus = findMethod(bleNotifyModelClass, "updatePhoneStatus", int.class);
+                                    Method addCallNotification = findMethod(bleNotifyModelClass, "addCallNotification",
+                                            String.class, String.class, int.class,
+                                            findClass("com.xiaomi.fitness.settingitem.settingitem.InCall", classLoader));
+
+                                    updatePhoneStatus.invoke(bleNotifyModel, 1);
+                                    addCallNotification.invoke(bleNotifyModel, text, null, 1, null);
+
+                                    new Thread(() -> {
+                                        try {
+                                            Thread.sleep(6000);
+                                        } catch (InterruptedException ignored) {
+                                        }
+                                        try {
+                                            updatePhoneStatus.invoke(bleNotifyModel, 0);
+                                            findMethod(bleNotifyModelClass, "alertInCallStop").invoke(bleNotifyModel);
+                                        } catch (Throwable e) {
+                                            log(Log.ERROR, TAG, "alertInCallStop", e);
+                                        }
+                                    }).start();
+                                } catch (Throwable e) {
+                                    log(Log.ERROR, TAG, "WeChat call alert error", e);
+                                }
+                            }
+                            return result;
+                        });
                     }
-                });
-            } catch (NoSuchMethodError e) {
-
+                } catch (Throwable e) {
+                    log(Log.WARN, TAG, "WeChat call alert hook failed", e);
+                }
             }
-        }
 
-        // 一加日程导入修复
-        if (Settings.isOneplusCalendarFixEnabled()) {
-            try {
-                // 修复：新版本日程导入适配了ColorOS，但是启用条件为厂商是oppo，导致一加无开关
-                // Lcom/xiaomi/fitness/sync/util/CalendarUtils;->getNormalReminder(Landroid/content/Context;Landroid/database/Cursor;)I
-                XposedHelpers.findAndHookMethod("com.xiaomi.fitness.common.utils.RomUtils", classLoader, "isOppo", new XC_MethodHook() {
-                    @Override
-                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                        super.beforeHookedMethod(param);
-                        if (Build.BRAND.toLowerCase().contains("oneplus") || Build.MANUFACTURER.toLowerCase().contains("oneplus")) {
-                            param.setResult(true);
-                        }
+            // 勿扰模式同步 - isSupportZenMode
+            if (Settings.isZenModeSyncEnabled()) {
+                try {
+                    Class<?> zenUtils = findClass("com.xiaomi.fitness.devicesettings.utils.ZenUtils", classLoader);
+                    Class<?> wearableDeviceModel = findClass("com.xiaomi.fitness.device.manager.export.WearableDeviceModel", classLoader);
+                    if (zenUtils != null && wearableDeviceModel != null) {
+                        Method isSupportZenMode = findMethod(zenUtils, "isSupportZenMode", wearableDeviceModel);
+                        hook(isSupportZenMode).intercept(chain -> {
+                            return true;
+                        });
                     }
-                });
-            } catch (NoSuchMethodError e) {
-
+                } catch (Throwable e) {
+                    log(Log.WARN, TAG, "isSupportZenMode hook failed", e);
+                }
             }
+
+            // 一加日程导入修复
+            if (Settings.isOneplusCalendarFixEnabled()) {
+                try {
+                    Class<?> romUtils = findClass("com.xiaomi.fitness.common.utils.RomUtils", classLoader);
+                    if (romUtils != null) {
+                        Method isOppo = findMethod(romUtils, "isOppo");
+                        hook(isOppo).intercept(chain -> {
+                            if (Build.BRAND.toLowerCase().contains("oneplus") || Build.MANUFACTURER.toLowerCase().contains("oneplus")) {
+                                return true;
+                            }
+                            return chain.proceed();
+                        });
+                    }
+                } catch (Throwable e) {
+                    log(Log.WARN, TAG, "OnePlus calendar fix hook failed", e);
+                }
+            }
+
+        } catch (Throwable e) {
+            log(Log.ERROR, TAG, "loadHook error", e);
         }
     }
 
-    /**
-     * setInterruptionFilter调用方为小米运动健康时，伪装为系统，实现全局开关
-     * 通知栏可能会显示为 “Android 系统”已开启免打扰
-     * 如果不做此处理，当手机开免打扰+手环关免打扰时，手机上的免打扰会无法关闭，因为走的是规则模式，而手机打开的是全局开关
-     * HyperOS高版本有做相关功能（ZenModeSyncHelper），不走这里，理论上hook了也没事
-     * 手机上监听系统免打扰变化相关代码在API35仍旧生效，不需要做处理
-     *
-     * @param classLoader
-     */
-    private static void loadHookForApi35Zen(ClassLoader classLoader) {
+    private void loadHookForApi35Zen(ClassLoader classLoader) {
         if (Build.VERSION.SDK_INT < 35) return;
-        // 小米运动健康理论上也要判断一下版本是否大于3.45.0(345000)，暂时不管了
-        // 如果要判断是不是支持小米专属勿扰同步的系统版本，可调用：
-        // Lcom/xiaomi/fitness/devicesettings/common/zenmode/ZenModeSyncHelper;->isSupportZenRuleSync(Landroid/content/Context;)Z
+
         try {
-            XposedBridge.log("搜索 SystemServer 的匿名内部类...");
-            boolean isHooked = false;
+            log(Log.INFO, TAG, "Searching SystemServer anonymous inner classes for setInterruptionFilter...");
 
             for (int i = 1; i <= 25; i++) {
                 String className = "com.android.server.notification.NotificationManagerService$" + i;
 
-                Class<?> innerClass = XposedHelpers.findClassIfExists(className, classLoader);
-
+                Class<?> innerClass = findClass(className, classLoader);
                 if (innerClass == null) {
                     break;
                 }
                 try {
-                    java.lang.reflect.Method method = innerClass.getDeclaredMethod(
-                            "setInterruptionFilter",
-                            String.class,
-                            int.class,
-                            boolean.class
-                    );
+                    Method method = findMethod(innerClass, "setInterruptionFilter", String.class, int.class, boolean.class);
 
-                    XposedBridge.log("找到目标匿名类: " + className);
+                    log(Log.INFO, TAG, "Found target anonymous class: " + className);
 
-                    // 找到后直接Hook
-                    XposedBridge.hookMethod(method, new XC_MethodHook() {
-                        @Override
-                        protected void beforeHookedMethod(MethodHookParam param) {
-                            String pkg = (String) param.args[0];
+                    hook(method).intercept(chain -> {
+                        String pkg = (String) chain.getArgs()[0];
 
-                            if ("com.xiaomi.wearable".equals(pkg) || "com.mi.health".equals(pkg)) {
-                                // 提权：切换为 System UID (1000)
-                                long token = android.os.Binder.clearCallingIdentity();
-                                param.setObjectExtra("binder_token", token);
+                        if ("com.xiaomi.wearable".equals(pkg) || "com.mi.health".equals(pkg)) {
+                            long token = android.os.Binder.clearCallingIdentity();
+                            chain.getArgs()[0] = "android";
+                            log(Log.INFO, TAG, "SystemServer: matched Mi Fitness, UID elevated and package name disguised");
 
-                                // 伪装：将包名强制篡改为 android
-                                param.args[0] = "android";
-                                XposedBridge.log("SystemServer: 匹配到小米运动健康，已执行UID提权并伪装包名");
+                            try {
+                                Object result = chain.proceed();
+                                return result;
+                            } finally {
+                                android.os.Binder.restoreCallingIdentity(token);
                             }
                         }
-
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) {
-                            Object tokenObj = param.getObjectExtra("binder_token");
-                            if (tokenObj != null) {
-                                // 恢复UID身份
-                                android.os.Binder.restoreCallingIdentity((long) tokenObj);
-                            }
-                        }
+                        return chain.proceed();
                     });
 
-                    isHooked = true;
-                    XposedBridge.log("SystemServer: 匿名内部类 Hook 注入成功");
-                    break; // 命中目标后直接跳出循环，结束穷举
-
+                    log(Log.INFO, TAG, "SystemServer: anonymous inner class hook injected successfully");
+                    return;
                 } catch (NoSuchMethodException e) {
-                    // 当前编号的匿名类不是我们要找的那个（比如它没有这个三参数方法），继续找下一个
+                    // Not the right anonymous class, continue
                 }
             }
 
-            if (!isHooked) {
-                XposedBridge.log("查找setInterruptionFilter方法失败");
-            }
+            log(Log.WARN, TAG, "setInterruptionFilter method not found in any anonymous class");
 
         } catch (Throwable t) {
-            XposedBridge.log("SystemServer穷举Hook异常: " + t);
+            log(Log.ERROR, TAG, "SystemServer exhaustive hook error: " + t);
         }
-    }
-
-    @Override
-    public void handleLoadPackage(XC_LoadPackage.LoadPackageParam loadPackageParam) throws ClassNotFoundException {
-        String packageName = loadPackageParam.packageName;
-        Settings.init();
-        if ("android".equals(packageName) || "android".equals(loadPackageParam.processName)) {
-            if (Settings.isZenModeSyncEnabled()) {
-                loadHookForApi35Zen(loadPackageParam.classLoader);
-            }
-            return;
-        }
-        if (!"com.xiaomi.wearable".equals(packageName) && !"com.mi.health".equals(packageName)) {
-            return;
-        }
-        EzXHelper.initHandleLoadPackage(loadPackageParam);
-        EzXHelper.setLogTag("WearableDebug");
-        EzXHelper.setToastTag("WearableDebug");
-        DexKit.INSTANCE.initDexKit(loadPackageParam);
-        if (Settings.isDisableAdEnabled()) {
-            DisableAd.interceptAd(loadPackageParam.classLoader);
-            DisableAd.disableReport(loadPackageParam.classLoader);
-            DisableAd.hideAqView(loadPackageParam.classLoader);
-        }
-
-        if (Settings.isDisableKeepLinkNotifyEnabled()) {
-            DisableKeepLinkNotify.disableDeviceSystemRedDot(loadPackageParam.classLoader);
-            DisableKeepLinkNotify.disableTabRedDot(loadPackageParam.classLoader);
-            DisableKeepLinkNotify.disableDialog(loadPackageParam.classLoader);
-        }
-
-        loadHook(loadPackageParam.classLoader);
-        DexKit.INSTANCE.closeDexKit();
-    }
-
-    @Override
-    public void handleInitPackageResources(XC_InitPackageResources.InitPackageResourcesParam resparam) throws Throwable {
-        String packageName = resparam.packageName;
-        if (!"com.xiaomi.wearable".equals(packageName) && !"com.mi.health".equals(packageName)) {
-            return;
-        }
-        Res.init(resparam);
-    }
-
-    @Override
-    public void initZygote(StartupParam startupParam) throws Throwable {
-        EzXHelper.initZygote(startupParam);
     }
 }

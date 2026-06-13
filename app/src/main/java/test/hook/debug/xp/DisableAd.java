@@ -2,79 +2,86 @@ package test.hook.debug.xp;
 
 import android.view.View;
 
-import com.github.kyuubiran.ezxhelper.ClassUtils;
-import com.github.kyuubiran.ezxhelper.HookFactory;
-import com.github.kyuubiran.ezxhelper.Log;
-
 import java.lang.reflect.Method;
 import java.util.Collections;
 
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedHelpers;
+import io.github.libxposed.api.XposedModule;
 
+/**
+ * DisableAd - API 102 version
+ * 移除了 EzXHelper、HookFactory、XposedHelpers 依赖
+ */
 public class DisableAd {
+    private static final String TAG = "DisableAd";
+
     /**
      * 国际版3.33.6i出现Banner广告，拦截广告加载
      */
-    public static void interceptAd(ClassLoader classLoader) {
+    public static void interceptAd(ClassLoader classLoader, XposedModule module) {
         try {
-            Class<?> impl = ClassUtils.loadClass("com.fitness.banner.export.BannerImpl", classLoader);
+            Class<?> impl = Class.forName("com.fitness.banner.export.BannerImpl", false, classLoader);
             for (Method method : impl.getDeclaredMethods()) {
                 if (method.getName().startsWith("getBannerListAsync")) {
-                    HookFactory.createMethodHook(method, hookFactory -> hookFactory.replace(methodHookParam -> null));
+                    module.hook(method).intercept(chain -> null);
                 } else if (method.getName().startsWith("getBannerList")) {
-                    HookFactory.createMethodHook(method, hookFactory -> hookFactory.replace(methodHookParam -> Collections.emptyList()));
+                    module.hook(method).intercept(chain -> Collections.emptyList());
                 }
             }
         } catch (ClassNotFoundException e) {
-            Log.e("Failed to disable ad", e);
+            module.log(android.util.Log.ERROR, TAG, "Failed to disable ad", e);
         }
     }
 
-    public static void disableReport(ClassLoader classLoader) {
+    public static void disableReport(ClassLoader classLoader, XposedModule module) {
         try {
-            Class<?> reportImpl = ClassUtils.loadClass("com.xiaomi.fitness.statistics.OnetrackImpl", classLoader);
+            Class<?> reportImpl = Class.forName("com.xiaomi.fitness.statistics.OnetrackImpl", false, classLoader);
             for (Method method : reportImpl.getDeclaredMethods()) {
                 if (!"reportData".equals(method.getName())) {
                     continue;
                 }
-                HookFactory.createMethodHook(method, hookFactory -> hookFactory.replace(methodHookParam -> null));
+                module.hook(method).intercept(chain -> null);
             }
-
         } catch (ClassNotFoundException e) {
-            Log.e("Failed to disable report", e);
+            module.log(android.util.Log.ERROR, TAG, "Failed to disable report", e);
         }
     }
 
     /**
      * 隐藏蚂蚁阿福和健康问诊横幅
-     *
-     * @param classLoader
      */
-    public static void hideAqView(ClassLoader classLoader) {
-        Class<?> AqViewClass = null;
-        Class<?> HealthBannerCardSetViewClass = null;
+    public static void hideAqView(ClassLoader classLoader, XposedModule module) {
+        Class<?> aqViewClass = null;
+        Class<?> healthBannerCardSetViewClass = null;
         try {
-            AqViewClass = classLoader.loadClass("com.xiaomi.fitness.view.AqView");
+            aqViewClass = classLoader.loadClass("com.xiaomi.fitness.view.AqView");
         } catch (ClassNotFoundException e) {
+            // Class not found, skip
         }
         try {
-            HealthBannerCardSetViewClass = classLoader.loadClass("com.xiaomi.fitness.view.HealthBannerCardSetView");
+            healthBannerCardSetViewClass = classLoader.loadClass("com.xiaomi.fitness.view.HealthBannerCardSetView");
         } catch (ClassNotFoundException e) {
+            // Class not found, skip
         }
-        Class<?> finalAqViewClass = AqViewClass;
-        Class<?> finalHealthBannerCardSetViewClass = HealthBannerCardSetViewClass;
-        XposedHelpers.findAndHookMethod("com.xiaomi.fitness.util.ExtUtilKt", classLoader, "visible", android.view.View.class, new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(XC_MethodHook.MethodHookParam param) throws Throwable {
-                super.beforeHookedMethod(param);
-                View view = (View) param.args[0];
+
+        final Class<?> finalAqViewClass = aqViewClass;
+        final Class<?> finalHealthBannerCardSetViewClass = healthBannerCardSetViewClass;
+
+        try {
+            Class<?> extUtilKt = Class.forName("com.xiaomi.fitness.util.ExtUtilKt", false, classLoader);
+            Method visibleMethod = extUtilKt.getDeclaredMethod("visible", View.class);
+            visibleMethod.setAccessible(true);
+
+            module.hook(visibleMethod).intercept(chain -> {
+                View view = (View) chain.getArgs()[0];
                 Class<?> clazz = view.getClass();
                 if (clazz.equals(finalAqViewClass) || clazz.equals(finalHealthBannerCardSetViewClass)) {
-                    param.setResult(null);
                     view.setVisibility(View.GONE);
+                    return null;
                 }
-            }
-        });
+                return chain.proceed();
+            });
+        } catch (ClassNotFoundException | NoSuchMethodException e) {
+            module.log(android.util.Log.ERROR, TAG, "Failed to hook ExtUtilKt.visible", e);
+        }
     }
 }

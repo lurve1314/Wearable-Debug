@@ -4,27 +4,29 @@ import android.app.AlertDialog;
 import android.content.Context;
 import android.net.Uri;
 import android.os.Environment;
+import android.util.Log;
 import android.widget.ProgressBar;
 import android.widget.Toast;
-
-import com.github.kyuubiran.ezxhelper.ClassUtils;
-import com.github.kyuubiran.ezxhelper.Log;
-import com.github.kyuubiran.ezxhelper.finders.MethodFinder;
 
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
-import java.util.Random;
 
-import de.robv.android.xposed.XposedHelpers;
+import io.github.libxposed.api.XposedModule;
 import test.hook.debug.xp.utils.Save;
 
+/**
+ * Install - API 102 version
+ * 移除了 EzXHelper、XposedHelpers、MethodFinder 依赖，改为原生反射
+ */
 public class Install {
+    private static final String TAG = "Install";
+
     /**
      * 读取指定表盘文件ID
      *
@@ -45,7 +47,7 @@ public class Install {
                 builder.append((char) read);
             }
         } catch (IOException e) {
-            Log.e(e, "getWatchFaceId");
+            Log.e(TAG, "getWatchFaceId", e);
         }
         return builder.toString();
     }
@@ -56,23 +58,32 @@ public class Install {
      * @param loader  当前类加载器
      * @param context 上下文用于Intent
      * @param path    固件文件位置
+     * @param module  XposedModule 实例
      */
-    public static void invokeUpdate(ClassLoader loader, Object context, String path) {
+    public static void invokeUpdate(ClassLoader loader, Object context, String path, XposedModule module) {
         try {
-            Class<?> checkUpdateExtKt = XposedHelpers.findClass("com.mi.fitness.checkupdate.export.CheckUpdateExtKt", loader);
-            Object manager = XposedHelpers.callStaticMethod(checkUpdateExtKt, "getCheckUpdateManager");
+            Class<?> checkUpdateExtKt = Class.forName("com.mi.fitness.checkupdate.export.CheckUpdateExtKt", false, loader);
+            Method getCheckUpdateManager = checkUpdateExtKt.getDeclaredMethod("getCheckUpdateManager");
+            getCheckUpdateManager.setAccessible(true);
+            Object manager = getCheckUpdateManager.invoke(null);
 
-            XposedHelpers.callMethod(manager, "manualUpgrade", new Class[]{Context.class, String.class, boolean.class},
-                    context, path, false);
+            Method manualUpgrade = manager.getClass().getDeclaredMethod("manualUpgrade", Context.class, String.class, boolean.class);
+            manualUpgrade.setAccessible(true);
+            manualUpgrade.invoke(manager, context, path, false);
         } catch (Throwable e) {
-            Log.e(e, "invokeUpdate new version not found");
+            Log.w(TAG, "invokeUpdate new version not found", e);
 
-            // 旧版本
-            Class<?> checkUpdateManagerImpl = XposedHelpers.findClass("com.mi.fitness.checkupdate.util.CheckUpdateManagerImpl", loader);
-            Object manager = XposedHelpers.newInstance(checkUpdateManagerImpl);
-            // boolean参数为true时为静默安装
-            XposedHelpers.callMethod(manager, "manualUpgrade", new Class[]{Context.class, String.class, boolean.class},
-                    context, path, false);
+            try {
+                // 旧版本
+                Class<?> checkUpdateManagerImpl = Class.forName("com.mi.fitness.checkupdate.util.CheckUpdateManagerImpl", false, loader);
+                Object manager = checkUpdateManagerImpl.newInstance();
+
+                Method manualUpgrade = manager.getClass().getDeclaredMethod("manualUpgrade", Context.class, String.class, boolean.class);
+                manualUpgrade.setAccessible(true);
+                manualUpgrade.invoke(manager, context, path, false);
+            } catch (Throwable e2) {
+                Log.e(TAG, "invokeUpdate fallback also failed", e2);
+            }
         }
     }
 
@@ -82,25 +93,27 @@ public class Install {
      * @param loader  当前类加载器
      * @param file    表盘文件路径
      * @param context context上下文
+     * @param module  XposedModule 实例
      */
-    public static void installWatchFace(ClassLoader loader, File file, Context context) {
+    public static void installWatchFace(ClassLoader loader, File file, Context context, XposedModule module) {
         try {
             String watchFaceId = getWatchFaceId(file);
             if (watchFaceId == null) {
-                Log.e("Failed to get id from " + file.getAbsolutePath(), null);
+                Log.e(TAG, "Failed to get id from " + file.getAbsolutePath());
                 return;
             }
 
             Class<?> model;
             try {
-                // 新
-                model = XposedHelpers.findClass("com.xiaomi.fitness.watch.face.viewmodel.FaceBleInfoViewModel", loader);
-            } catch (XposedHelpers.ClassNotFoundError e) {
-                model = XposedHelpers.findClass("com.xiaomi.fitness.watch.face.viewmodel.FaceDetailViewModel", loader);
+                model = Class.forName("com.xiaomi.fitness.watch.face.viewmodel.FaceBleInfoViewModel", false, loader);
+            } catch (ClassNotFoundException e) {
+                model = Class.forName("com.xiaomi.fitness.watch.face.viewmodel.FaceDetailViewModel", false, loader);
             }
 
             Object instance = model.newInstance();
-            Object controller = XposedHelpers.getObjectField(instance, "faceInstallController");
+            Field controllerField = instance.getClass().getDeclaredField("faceInstallController");
+            controllerField.setAccessible(true);
+            Object controller = controllerField.get(instance);
 
             AlertDialog.Builder builder = new AlertDialog.Builder(context);
             builder.setCancelable(false);
@@ -111,33 +124,33 @@ public class Install {
             AlertDialog dialog = builder.create();
             dialog.show();
 
-            Class<?> callbackClass = XposedHelpers.findClass("com.xiaomi.fitness.watch.face.install.FaceInstallPushCallback", loader);
+            Class<?> callbackClass = Class.forName("com.xiaomi.fitness.watch.face.install.FaceInstallPushCallback", false, loader);
             Object callback = Proxy.newProxyInstance(loader, new Class<?>[]{callbackClass}, (proxy, method, args) -> {
                 try {
                     switch (method.getName()) {
                         case "onProgress": {
                             int pos = (int) args[0];
-                            Log.i("p: " + pos, null);
+                            Log.i(TAG, "p: " + pos);
                             progressBar.setProgress(pos);
                             break;
                         }
                         case "onFinish": {
                             boolean success = (boolean) args[0];
                             int code = (int) args[1];
-                            Log.i("success: " + success + " code: " + code, null);
+                            Log.i(TAG, "success: " + success + " code: " + code);
                             dialog.dismiss();
                             break;
                         }
                         case "onStart": {
-                            Log.i("start install", null);
+                            Log.i(TAG, "start install");
                             break;
                         }
                         default: {
-                            Log.e("Unknown value: " + method.getName(), null);
+                            Log.e(TAG, "Unknown value: " + method.getName());
                         }
                     }
                 } catch (Throwable e) {
-                    Log.e(e, method.toString());
+                    Log.e(TAG, method.toString(), e);
                     if (dialog.isShowing()) {
                         dialog.dismiss();
                     }
@@ -147,37 +160,34 @@ public class Install {
 
             try {
                 // 构造 Kotlin 的 Function3 代理，用于 preInstall 回调
-                Class<?> function3Class = XposedHelpers.findClass("kotlin.jvm.functions.Function3", loader);
+                Class<?> function3Class = Class.forName("kotlin.jvm.functions.Function3", false, loader);
                 Object dummyAction = Proxy.newProxyInstance(loader, new Class<?>[]{function3Class}, (proxy, method, args) -> {
                     // 安全起见，返回 kotlin.Unit.INSTANCE 以绕过 Kotlin 的非空检查
-                    return XposedHelpers.getStaticObjectField(XposedHelpers.findClass("kotlin.Unit", loader), "INSTANCE");
+                    Class<?> unitClass = Class.forName("kotlin.Unit", false, loader);
+                    return unitClass.getDeclaredField("INSTANCE").get(null);
                 });
 
                 // 先调用 preInstall 建立握手
-                // preInstall(String id, String path, long version, long size, boolean needCheckStorage, String license, String sign, Integer trialDuration, Function3 action)
-                XposedHelpers.callMethod(controller, "preInstall",
-                        new Class<?>[]{
-                                String.class, String.class, long.class, long.class, boolean.class,
-                                String.class, String.class, Integer.class, function3Class
-                        },
+                Method preInstall = controller.getClass().getDeclaredMethod("preInstall",
+                        String.class, String.class, long.class, long.class, boolean.class,
+                        String.class, String.class, Integer.class, function3Class);
+                preInstall.setAccessible(true);
+                preInstall.invoke(controller,
                         watchFaceId, file.getAbsolutePath(), 0L, file.length(), true,
-                        null, null, 0, dummyAction
-                );
+                        null, null, 0, dummyAction);
             } catch (Throwable error) {
                 // 旧版没这步骤
             }
 
             // 调用 doInstall 正式传输文件
-            // doInstall(String path, String id, Integer segmentLength, FaceInstallPushCallback callback)
-            XposedHelpers.callMethod(controller, "doInstall",
-                    new Class<?>[]{
-                            String.class, String.class, Integer.class, callbackClass
-                    },
-                    file.getAbsolutePath(), watchFaceId, 0, callback
-            );
+            Method doInstall = controller.getClass().getDeclaredMethod("doInstall",
+                    String.class, String.class, Integer.class, callbackClass);
+            doInstall.setAccessible(true);
+            doInstall.invoke(controller,
+                    file.getAbsolutePath(), watchFaceId, 0, callback);
 
         } catch (Throwable e) {
-            Log.e(e, "installWatchFace");
+            Log.e(TAG, "installWatchFace", e);
         }
     }
 
@@ -187,17 +197,41 @@ public class Install {
      * @param loader 当前类加载器
      * @return com.xiaomi.fitness.device.manager.WearableDeviceManagerImpl
      */
-    public static Object getDeviceManager(ClassLoader loader) throws ClassNotFoundException, NoSuchMethodException {
-        Class<?> deviceManager = ClassUtils.loadFirstClass("com.xiaomi.fitness.device.manager.export.DeviceManager", "com.xiaomi.fitness.device.manager.export.WearableDeviceManager");
-        Object companion = XposedHelpers.getStaticObjectField(deviceManager, "Companion");
-        Class<?> deviceManagerExtKt = XposedHelpers.findClass("com.xiaomi.fitness.device.manager.export.DeviceManagerExtKt", loader);
-        return ClassUtils.invokeStaticMethodBestMatch(deviceManagerExtKt, "getInstance", null, companion);
+    public static Object getDeviceManager(ClassLoader loader) throws Exception {
+        Class<?> deviceManager;
+        try {
+            deviceManager = Class.forName("com.xiaomi.fitness.device.manager.export.DeviceManager", false, loader);
+        } catch (ClassNotFoundException e) {
+            deviceManager = Class.forName("com.xiaomi.fitness.device.manager.export.WearableDeviceManager", false, loader);
+        }
+
+        Object companion = deviceManager.getDeclaredField("Companion").get(null);
+
+        Class<?> deviceManagerExtKt = Class.forName("com.xiaomi.fitness.device.manager.export.DeviceManagerExtKt", false, loader);
+        Method[] methods = deviceManagerExtKt.getDeclaredMethods();
+        for (Method m : methods) {
+            if ("getInstance".equals(m.getName()) && m.getParameterCount() == 1) {
+                m.setAccessible(true);
+                return m.invoke(null, companion);
+            }
+        }
+        throw new NoSuchMethodException("getInstance not found in DeviceManagerExtKt");
     }
 
-    public static Object getCurrentDevice(ClassLoader loader) throws ClassNotFoundException, NoSuchMethodException {
+    public static Object getCurrentDevice(ClassLoader loader) throws Exception {
         Object instance = getDeviceManager(loader);
-        Object deviceModel = XposedHelpers.callMethod(instance, "getCurrentDeviceModel");
-        if (deviceModel == null || !(boolean) XposedHelpers.callMethod(deviceModel, "isDeviceConnected")) {
+
+        Method getCurrentDeviceModel = instance.getClass().getDeclaredMethod("getCurrentDeviceModel");
+        getCurrentDeviceModel.setAccessible(true);
+        Object deviceModel = getCurrentDeviceModel.invoke(instance);
+
+        if (deviceModel == null) {
+            return null;
+        }
+
+        Method isDeviceConnected = deviceModel.getClass().getDeclaredMethod("isDeviceConnected");
+        isDeviceConnected.setAccessible(true);
+        if (!(boolean) isDeviceConnected.invoke(deviceModel)) {
             return null;
         }
         return deviceModel;
@@ -208,20 +242,37 @@ public class Install {
      *
      * @param loader  当前类加载器
      * @param thisObj 当前方法对象
+     * @param module  XposedModule 实例
      */
-    public static Object unInstall(ClassLoader loader, Object thisObj) throws InvocationTargetException, IllegalAccessException, ClassNotFoundException, NoSuchMethodException {
+    public static Object unInstall(ClassLoader loader, Object thisObj, XposedModule module) throws Exception {
         Object deviceModel = getCurrentDevice(loader);
         if (deviceModel == null) {
             return true;
         }
 
-        Object did = XposedHelpers.callMethod(deviceModel, "getDid");
-        Object pkgName = XposedHelpers.getObjectField(thisObj, "pkgName");
-        Class<?> deviceModelExtKt = XposedHelpers.findClass("com.xiaomi.xms.wearable.extensions.DeviceModelExtKt", loader);
-        Class<?> callback = XposedHelpers.findClass("com.xiaomi.xms.wearable.ui.debug.ThirdAppDebugFragment$unInstallApp$1", loader);
-        Object callbackObj = XposedHelpers.newInstance(callback, new Class<?>[]{XposedHelpers.findClass("com.xiaomi.xms.wearable.ui.debug.ThirdAppDebugFragment", loader), String.class}, thisObj, did);
+        Method getDid = deviceModel.getClass().getDeclaredMethod("getDid");
+        getDid.setAccessible(true);
+        Object did = getDid.invoke(deviceModel);
 
-        Method uninstallApp = MethodFinder.fromClass(deviceModelExtKt).filterByName("uninstallApp").first();
+        Field pkgNameField = thisObj.getClass().getDeclaredField("pkgName");
+        pkgNameField.setAccessible(true);
+        Object pkgName = pkgNameField.get(thisObj);
+
+        Class<?> deviceModelExtKt = Class.forName("com.xiaomi.xms.wearable.extensions.DeviceModelExtKt", false, loader);
+        Class<?> callbackClass = Class.forName("com.xiaomi.xms.wearable.ui.debug.ThirdAppDebugFragment$unInstallApp$1", false, loader);
+        Class<?> fragmentClass = Class.forName("com.xiaomi.xms.wearable.ui.debug.ThirdAppDebugFragment", false, loader);
+        Object callbackObj = callbackClass.getConstructor(fragmentClass, String.class).newInstance(thisObj, did);
+
+        Method uninstallApp = null;
+        for (Method m : deviceModelExtKt.getDeclaredMethods()) {
+            if ("uninstallApp".equals(m.getName())) {
+                uninstallApp = m;
+                break;
+            }
+        }
+        if (uninstallApp == null) {
+            throw new NoSuchMethodException("uninstallApp not found in DeviceModelExtKt");
+        }
         uninstallApp.setAccessible(true);
 
         // 如果 Save.sign 为空（未安装），造一个空的 20 字节签名数组
@@ -260,33 +311,27 @@ public class Install {
 
     /**
      * 处理试用表盘文件
-     * 1. 从试用目录复制到 Download 目录
-     * 2. 修改 ID (需要二进制修改) -> 暂时保留原 ID (需注意风险)，但必须复制出来
      *
      * @param context 上下文
      * @return true if success
      */
     public static boolean handleTrialWatchFace(Context context) {
         try {
-            // 试用表盘通常路径: Android/data/com.mi.health/files/WatchFace/
-            // 或者 Android/data/com.xiaomi.wearable/files/WatchFace/
-            
             String pkg = context.getPackageName();
             File watchFaceDir = new File(context.getExternalFilesDir(null).getParentFile().getParentFile(), pkg + "/files/WatchFace");
-            
+
             if (!watchFaceDir.exists()) {
-                // 尝试旧路径
                 watchFaceDir = new File(Environment.getExternalStorageDirectory(), "Android/data/" + pkg + "/files/WatchFace");
             }
 
             if (!watchFaceDir.exists() || !watchFaceDir.isDirectory()) {
-                Log.e("WatchFace dir not found: " + watchFaceDir.getAbsolutePath(), null);
+                Log.e(TAG, "WatchFace dir not found: " + watchFaceDir.getAbsolutePath());
                 return false;
             }
 
             File[] faceFolders = watchFaceDir.listFiles();
             if (faceFolders == null || faceFolders.length == 0) {
-                Log.e("No trial watch faces found", null);
+                Log.e(TAG, "No trial watch faces found");
                 return false;
             }
 
@@ -305,7 +350,7 @@ public class Install {
             // 查找 resource.bin
             File resFile = findResourceFile(latestFolder);
             if (resFile == null) {
-                Log.e("resource.bin not found in " + latestFolder.getName(), null);
+                Log.e(TAG, "resource.bin not found in " + latestFolder.getName());
                 return false;
             }
 
@@ -313,25 +358,17 @@ public class Install {
             File downloadDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
             File outputDir = new File(downloadDir, "WearableDebugTrials");
             if (!outputDir.exists()) outputDir.mkdirs();
-            
-            // 读取原始 ID
-            String originalId = getWatchFaceId(resFile);
-            String newId = generateNewId(originalId);
-            
+
             File destFile = new File(outputDir, "watchface_" + System.currentTimeMillis() + ".bin");
-            
+
             // 复制文件
             copyFile(resFile, destFile);
-            
-            // TODO: 修改二进制中的 ID (hard)
-            // 暂时简单提示用户手动修改 ID，或者尝试简单的二进制替换 (如果 ID 长度相同)
-            // 这里为了安全和实现复杂度，先只做提取，后续如果需要自动改 ID 再做。
-            
+
             Toast.makeText(context, "已导出表盘到: " + destFile.getAbsolutePath(), Toast.LENGTH_LONG).show();
             return true;
 
         } catch (Throwable e) {
-            Log.e(e, "handleTrialWatchFace");
+            Log.e(TAG, "handleTrialWatchFace", e);
             return false;
         }
     }
@@ -339,8 +376,7 @@ public class Install {
     private static File findResourceFile(File dir) {
         File resource = new File(dir, "resource.bin");
         if (resource.exists()) return resource;
-        
-        // 递归查找一层
+
         File[] files = dir.listFiles();
         if (files != null) {
             for (File f : files) {
@@ -351,12 +387,6 @@ public class Install {
             }
         }
         return null;
-    }
-
-    private static String generateNewId(String original) {
-        if (original == null) return String.valueOf(System.currentTimeMillis());
-        // 简单修改前几位防止重复
-        return "trial_" + original; 
     }
 
     private static void copyFile(File src, File dest) throws IOException {

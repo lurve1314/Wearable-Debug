@@ -1,13 +1,15 @@
 package test.hook.debug.xp;
 
+import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import de.robv.android.xposed.XposedHelpers;
+import io.github.libxposed.api.XposedModule;
 
 /**
- * @author user
+ * EncryptKey - API 102 version
+ * 移除了 XposedHelpers 依赖，改为原生反射
  */
 public class EncryptKey {
     /**
@@ -15,9 +17,10 @@ public class EncryptKey {
      * 返回 did -> [设备名称, EncryptKey]
      *
      * @param classLoader 当前类加载器
+     * @param module      XposedModule 实例
      * @param cb          数据回调
      */
-    public static void showEncryptKey(ClassLoader classLoader, Callback<Map<String, String[]>> cb) {
+    public static void showEncryptKey(ClassLoader classLoader, XposedModule module, Callback<Map<String, String[]>> cb) {
         try {
             Object deviceManager = Install.getDeviceManager(classLoader);
             if (deviceManager == null) {
@@ -25,26 +28,38 @@ public class EncryptKey {
                 return;
             }
 
-            List<?> infoList = (List<?>) XposedHelpers.callMethod(deviceManager, "getDeviceList");
+            Method getDeviceList = deviceManager.getClass().getDeclaredMethod("getDeviceList");
+            getDeviceList.setAccessible(true);
+            List<?> infoList = (List<?>) getDeviceList.invoke(deviceManager);
 
             Map<String, String[]> result = new HashMap<>();
 
             for (Object o : infoList) {
-                String did = (String) XposedHelpers.callMethod(o, "getDid");
+                Method getDid = o.getClass().getDeclaredMethod("getDid");
+                getDid.setAccessible(true);
+                String did = (String) getDid.invoke(o);
                 if (did == null) {
                     continue;
                 }
-                String name = (String) XposedHelpers.callMethod(o, "getName");
 
-                Object detail = XposedHelpers.callMethod(o, "getDetail");
+                Method getName = o.getClass().getDeclaredMethod("getName");
+                getName.setAccessible(true);
+                String name = (String) getName.invoke(o);
+
+                Method getDetail = o.getClass().getDeclaredMethod("getDetail");
+                getDetail.setAccessible(true);
+                Object detail = getDetail.invoke(o);
                 if (detail == null) {
                     continue;
                 }
-                String encryptKey = (String) XposedHelpers.callMethod(detail, "getEncryptKey");
+
+                Method getEncryptKey = detail.getClass().getDeclaredMethod("getEncryptKey");
+                getEncryptKey.setAccessible(true);
+                String encryptKey = (String) getEncryptKey.invoke(detail);
                 result.put(did, new String[]{name, encryptKey});
             }
             cb.onSuccess(result);
-        } catch (ClassNotFoundException | NoSuchMethodException e) {
+        } catch (Exception e) {
             cb.onError(e.getMessage(), e);
         }
     }

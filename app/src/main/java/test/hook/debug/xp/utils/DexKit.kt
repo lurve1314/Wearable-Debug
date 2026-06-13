@@ -1,6 +1,5 @@
 package test.hook.debug.xp.utils
 
-import de.robv.android.xposed.callbacks.XC_LoadPackage.LoadPackageParam
 import org.luckypray.dexkit.DexKitBridge
 
 /**
@@ -21,8 +20,8 @@ object DexKit {
     /**
      * 初始化 DexKit 的 apk 完整路径
      */
-    fun initDexKit(loadPackageParam: LoadPackageParam) {
-        hostDir = loadPackageParam.appInfo.sourceDir
+    fun initDexKit(sourceDir: String) {
+        hostDir = sourceDir
     }
 
     /**
