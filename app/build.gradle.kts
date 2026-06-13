@@ -49,7 +49,7 @@ android {
 
 dependencies {
     compileOnly(libs.libxposed.api)
-    implementation(libs.libxposed.service)
+    compileOnly(libs.libxposed.service)
     implementation(libs.dexkit)
     implementation(libs.annotation)
 }
