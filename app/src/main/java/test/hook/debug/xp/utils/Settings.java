@@ -35,20 +35,39 @@ public class Settings {
         }
     }
     
+    // 试用表盘功能
     public static boolean isTrialWatchFaceEnabled() {
         return Boolean.parseBoolean(props.getProperty("trial_watchface_enabled", "true"));
     }
     
-    public static boolean isDebugLogEnabled() {
-        return Boolean.parseBoolean(props.getProperty("debug_log_enabled", "false"));
-    }
-    
+    // 广告屏蔽
     public static boolean isDisableAdEnabled() {
         return Boolean.parseBoolean(props.getProperty("disable_ad_enabled", "true"));
     }
     
+    // 连接保护通知屏蔽
     public static boolean isDisableKeepLinkNotifyEnabled() {
         return Boolean.parseBoolean(props.getProperty("disable_keep_link_notify_enabled", "true"));
+    }
+    
+    // 勿扰模式同步（API35 + isSupportZenMode）
+    public static boolean isZenModeSyncEnabled() {
+        return Boolean.parseBoolean(props.getProperty("zen_mode_sync_enabled", "true"));
+    }
+    
+    // 微信通话6s强提醒
+    public static boolean isWeChatCallAlertEnabled() {
+        return Boolean.parseBoolean(props.getProperty("wechat_call_alert_enabled", "true"));
+    }
+    
+    // 一加日程导入修复
+    public static boolean isOneplusCalendarFixEnabled() {
+        return Boolean.parseBoolean(props.getProperty("oneplus_calendar_fix_enabled", "true"));
+    }
+    
+    // 调试日志
+    public static boolean isDebugLogEnabled() {
+        return Boolean.parseBoolean(props.getProperty("debug_log_enabled", "false"));
     }
     
     public static void setProperty(String key, String value) {

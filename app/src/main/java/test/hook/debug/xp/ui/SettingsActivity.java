@@ -32,6 +32,15 @@ public class SettingsActivity extends android.app.Activity {
         // 添加连接保护通知屏蔽开关
         addSwitch(layout, "屏蔽连接保护通知", "disable_keep_link_notify_enabled", true);
         
+        // 添加勿扰模式同步开关
+        addSwitch(layout, "勿扰模式同步", "zen_mode_sync_enabled", true);
+        
+        // 添加微信通话强提醒开关
+        addSwitch(layout, "微信通话强提醒", "wechat_call_alert_enabled", true);
+        
+        // 添加一加日程修复开关
+        addSwitch(layout, "一加日程修复", "oneplus_calendar_fix_enabled", true);
+        
         // 添加调试日志开关
         addSwitch(layout, "调试日志", "debug_log_enabled", false);
         
@@ -87,6 +96,12 @@ public class SettingsActivity extends android.app.Activity {
                 return Settings.isDisableAdEnabled();
             case "disable_keep_link_notify_enabled":
                 return Settings.isDisableKeepLinkNotifyEnabled();
+            case "zen_mode_sync_enabled":
+                return Settings.isZenModeSyncEnabled();
+            case "wechat_call_alert_enabled":
+                return Settings.isWeChatCallAlertEnabled();
+            case "oneplus_calendar_fix_enabled":
+                return Settings.isOneplusCalendarFixEnabled();
             case "debug_log_enabled":
                 return Settings.isDebugLogEnabled();
             default:

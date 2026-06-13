@@ -312,61 +312,68 @@ public class MainHook implements IXposedHookLoadPackage, IXposedHookInitPackageR
         });
 
         // 微信通话6s强提醒
-        XposedHelpers.findAndHookMethod("com.xiaomi.fitness.notify.util.NotificationFilterHelper", classLoader, "isWeChatIncomingCall", "android.service.notification.StatusBarNotification", "java.lang.String", "java.lang.String", new XC_MethodHook() {
-            @Override
-            protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                super.afterHookedMethod(param);
+        if (Settings.isWeChatCallAlertEnabled()) {
+            XposedHelpers.findAndHookMethod("com.xiaomi.fitness.notify.util.NotificationFilterHelper", classLoader, "isWeChatIncomingCall", "android.service.notification.StatusBarNotification", "java.lang.String", "java.lang.String", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    super.afterHookedMethod(param);
 //                StatusBarNotification sbn = (StatusBarNotification) param.args[0];
-                String title = (String) param.args[1];
-                String text = (String) param.args[2];
-                boolean isWeChatIncomingCall = (boolean) param.getResult();
+                    String title = (String) param.args[1];
+                    String text = (String) param.args[2];
+                    boolean isWeChatIncomingCall = (boolean) param.getResult();
 //                XposedBridge.log(title + text + isWeChatIncomingCall);
-                if (isWeChatIncomingCall && title != null && text != null) {
-                    Class<?> BleNotifyModelClass = classLoader.loadClass("com.xiaomi.fitness.notify.BleNotifyModel");
-                    Object bleNotifyModel = XposedHelpers.getStaticObjectField(BleNotifyModelClass, "INSTANCE");
-                    XposedHelpers.callMethod(bleNotifyModel, "updatePhoneStatus", 1);
-                    Class<?> InCallClass = classLoader.loadClass("com.xiaomi.fitness.settingitem.settingitem.InCall");
-                    XposedHelpers.callMethod(bleNotifyModel, "addCallNotification", new Class<?>[]{String.class, String.class, int.class, InCallClass}, text, null, 1, null);
+                    if (isWeChatIncomingCall && title != null && text != null) {
+                        Class<?> BleNotifyModelClass = classLoader.loadClass("com.xiaomi.fitness.notify.BleNotifyModel");
+                        Object bleNotifyModel = XposedHelpers.getStaticObjectField(BleNotifyModelClass, "INSTANCE");
+                        XposedHelpers.callMethod(bleNotifyModel, "updatePhoneStatus", 1);
+                        Class<?> InCallClass = classLoader.loadClass("com.xiaomi.fitness.settingitem.settingitem.InCall");
+                        XposedHelpers.callMethod(bleNotifyModel, "addCallNotification", new Class<?>[]{String.class, String.class, int.class, InCallClass}, text, null, 1, null);
 
-                    new Thread(() -> {
-                        try {
-                            Thread.sleep(6000);
-                        } catch (InterruptedException ignored) {
-                        }
-                        XposedHelpers.callMethod(bleNotifyModel, "updatePhoneStatus", 0);
-                        XposedHelpers.callMethod(bleNotifyModel, "alertInCallStop");
-                    }).start();
-                }
-            }
-        });
-
-        // 显示系统设置-勿扰模式同步入口，并执行相关逻辑
-        try {
-            XposedHelpers.findAndHookMethod("com.xiaomi.fitness.devicesettings.utils.ZenUtils", classLoader, "isSupportZenMode", classLoader.loadClass("com.xiaomi.fitness.device.manager.export.WearableDeviceModel"), new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                    super.beforeHookedMethod(param);
-                    param.setResult(true);
-                }
-            });
-        } catch (NoSuchMethodError e) {
-
-        }
-
-        try {
-            // 修复：新版本日程导入适配了ColorOS，但是启用条件为厂商是oppo，导致一加无开关
-            // Lcom/xiaomi/fitness/sync/util/CalendarUtils;->getNormalReminder(Landroid/content/Context;Landroid/database/Cursor;)I
-            XposedHelpers.findAndHookMethod("com.xiaomi.fitness.common.utils.RomUtils", classLoader, "isOppo", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                    super.beforeHookedMethod(param);
-                    if (Build.BRAND.toLowerCase().contains("oneplus") || Build.MANUFACTURER.toLowerCase().contains("oneplus")) {
-                        param.setResult(true);
+                        new Thread(() -> {
+                            try {
+                                Thread.sleep(6000);
+                            } catch (InterruptedException ignored) {
+                            }
+                            XposedHelpers.callMethod(bleNotifyModel, "updatePhoneStatus", 0);
+                            XposedHelpers.callMethod(bleNotifyModel, "alertInCallStop");
+                        }).start();
                     }
                 }
             });
-        } catch (NoSuchMethodError e) {
+        }
 
+        // 显示系统设置-勿扰模式同步入口，并执行相关逻辑
+        if (Settings.isZenModeSyncEnabled()) {
+            try {
+                XposedHelpers.findAndHookMethod("com.xiaomi.fitness.devicesettings.utils.ZenUtils", classLoader, "isSupportZenMode", classLoader.loadClass("com.xiaomi.fitness.device.manager.export.WearableDeviceModel"), new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        super.beforeHookedMethod(param);
+                        param.setResult(true);
+                    }
+                });
+            } catch (NoSuchMethodError e) {
+
+            }
+        }
+
+        // 一加日程导入修复
+        if (Settings.isOneplusCalendarFixEnabled()) {
+            try {
+                // 修复：新版本日程导入适配了ColorOS，但是启用条件为厂商是oppo，导致一加无开关
+                // Lcom/xiaomi/fitness/sync/util/CalendarUtils;->getNormalReminder(Landroid/content/Context;Landroid/database/Cursor;)I
+                XposedHelpers.findAndHookMethod("com.xiaomi.fitness.common.utils.RomUtils", classLoader, "isOppo", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        super.beforeHookedMethod(param);
+                        if (Build.BRAND.toLowerCase().contains("oneplus") || Build.MANUFACTURER.toLowerCase().contains("oneplus")) {
+                            param.setResult(true);
+                        }
+                    }
+                });
+            } catch (NoSuchMethodError e) {
+
+            }
         }
     }
 
@@ -454,8 +461,11 @@ public class MainHook implements IXposedHookLoadPackage, IXposedHookInitPackageR
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam loadPackageParam) throws ClassNotFoundException {
         String packageName = loadPackageParam.packageName;
+        Settings.init();
         if ("android".equals(packageName) || "android".equals(loadPackageParam.processName)) {
-            loadHookForApi35Zen(loadPackageParam.classLoader);
+            if (Settings.isZenModeSyncEnabled()) {
+                loadHookForApi35Zen(loadPackageParam.classLoader);
+            }
             return;
         }
         if (!"com.xiaomi.wearable".equals(packageName) && !"com.mi.health".equals(packageName)) {
@@ -464,7 +474,6 @@ public class MainHook implements IXposedHookLoadPackage, IXposedHookInitPackageR
         EzXHelper.initHandleLoadPackage(loadPackageParam);
         EzXHelper.setLogTag("WearableDebug");
         EzXHelper.setToastTag("WearableDebug");
-        Settings.init();
         DexKit.INSTANCE.initDexKit(loadPackageParam);
         if (Settings.isDisableAdEnabled()) {
             DisableAd.interceptAd(loadPackageParam.classLoader);
