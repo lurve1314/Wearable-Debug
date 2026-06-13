@@ -23,7 +23,7 @@ android {
 
     buildTypes {
         named("release") {
-            isMinifyEnabled = true
+            isMinifyEnabled = false
             proguardFiles("proguard-rules.pro")
         }
         named("debug") {
